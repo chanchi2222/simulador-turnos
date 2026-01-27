@@ -37,7 +37,7 @@
         const { useState, useEffect, useMemo, useRef } = React;
 
         // ==========================================
-        // 1. CONSTANTES Y CONFIGURACIÓN INICIAL
+        // 1. CONSTANTES, ICONOS Y HELPERS
         // ==========================================
         const PRECONFIGURED_URL = "https://dwccmujoouxzovbhndpx.supabase.co";
         const PRECONFIGURED_KEY = "sb_publishable_x7wvlT-vPhu5p8i5k7Wa-Q_yb3s1slS"; 
@@ -55,9 +55,6 @@
 
         const VERDE_ROTATION = [{ guardia: [1, 4], madruga: [3, 6] }, { guardia: [2, 5], madruga: [1, 4] }, { guardia: [3, 6], madruga: [2, 5] }];
 
-        // ==========================================
-        // 2. ICONOS (Componentes UI puros)
-        // ==========================================
         const Icon = ({ path, className }) => (
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>{path}</svg>
         );
@@ -81,10 +78,6 @@
             Leaf: <><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/></>
         };
 
-        // ==========================================
-        // 3. MOTOR DE LÓGICA (Funciones Puras)
-        // ==========================================
-        
         const getMonday = (d) => { 
             const dObj = new Date(d); 
             const day = dObj.getDay(); 
@@ -92,6 +85,19 @@
             const mon = new Date(dObj.setDate(diff)); 
             mon.setHours(0,0,0,0); 
             return mon; 
+        };
+
+        const assignLabelsToNormals = (peopleList, labelsQueue) => {
+            let labelIndex = 0;
+            return peopleList.map(p => {
+                if (p.isVerde) return p; 
+                if (labelIndex < labelsQueue.length) {
+                    const assignedLabel = labelsQueue[labelIndex];
+                    labelIndex++;
+                    return { ...p, specialLabel: assignedLabel };
+                }
+                return p;
+            });
         };
 
         const calculateSimulation = (targetDate, targetCollaId, collasData, config) => {
@@ -107,8 +113,8 @@
                 return cAbsencesList.find(a => {
                     if (a.name !== pName) return false;
                     const activeStart = a.start;
-                    const activeEnd = a.end || '9999-12-31';
-                    return dStr >= activeStart && dStr < activeEnd;
+                    const activeEnd = a.end ? a.end : '9999-12-31';
+                    return dStr >= activeStart && dStr <= activeEnd;
                 });
             };
 
@@ -155,7 +161,11 @@
                         let found = false; let offset = 1;
                         while (!found && offset < cNames.length * 2) {
                             const candidateName = cNames[(startIndex + offset) % cNames.length];
-                            if (!isAbsent(candidateName, nextDateStr)) { currentHeadName = candidateName; found = true; }
+                            const abs = isAbsent(candidateName, nextDateStr);
+                            if (!abs || abs.shiftsRotation === false) { 
+                                currentHeadName = candidateName; 
+                                found = true; 
+                            }
                             offset++;
                         }
                     } else {
@@ -164,7 +174,11 @@
                         let found = false; let offset = 1;
                         while (!found && offset < cNames.length * 2) {
                             const candidateName = cNames[(startIndex - offset + cNames.length * 2) % cNames.length];
-                            if (!isAbsent(candidateName, nextDateStr)) { currentHeadName = candidateName; found = true; }
+                            const abs = isAbsent(candidateName, nextDateStr);
+                            if (!abs || abs.shiftsRotation === false) { 
+                                currentHeadName = candidateName; 
+                                found = true; 
+                            }
                             offset++;
                         }
                     }
@@ -178,7 +192,11 @@
             for (let i = 0; i < cNames.length; i++) {
                 const name = cNames[(headStartIndex + i) % cNames.length];
                 const abs = isAbsent(name, dateStr);
-                if (abs) { absentPeople.push({ name, status: abs.type, isVerde: false }); } else { activePeople.push({ name, isVerde: false }); }
+                if (abs) { 
+                    absentPeople.push({ name, status: abs.type, isVerde: false }); 
+                } else { 
+                    activePeople.push({ name, isVerde: false }); 
+                }
             }
 
             let libraName = "N/A";
@@ -196,7 +214,7 @@
                 cehorpaList = activePeople; 
             }
 
-            // --- LÓGICA VERDES MEJORADA (CON MODOS AVANZADOS) ---
+            // --- LÓGICA VERDES MEJORADA ---
             const activeVerdesGuardia = [];
             const activeVerdesMadruga = [];
             const remainingVerdesList = [];
@@ -204,11 +222,8 @@
             cVerdes.forEach(v => {
                 const vStartDate = v.startDate ? new Date(v.startDate) : new Date(refDateObj);
                 vStartDate.setHours(0,0,0,0);
-                
-                // Filtro por Fecha de Inicio
                 if (targetTime < vStartDate.getTime()) return;
 
-                // Filtro por Fecha Fin (Opcional)
                 if (v.endDate) {
                     const vEndDate = new Date(v.endDate);
                     vEndDate.setHours(0,0,0,0);
@@ -227,15 +242,12 @@
                 const otherCenter = startCenter === 'CORTIJOS' ? 'CEHORPA' : 'CORTIJOS';
                 let effectiveCenter = 'CEHORPA';
 
-                // LÓGICA DE ROTACIÓN DE CENTRO
-                // Compatible con legacy 'rotatesCenter' boolean
                 const rotationMode = v.rotationMode || (v.rotatesCenter ? 'SEMANAL' : 'FIJO');
 
                 if (rotationMode === 'SEMANAL') {
                     const isEvenWeek = verdeWeeksPassed % 2 === 0;
                     effectiveCenter = isEvenWeek ? startCenter : otherCenter;
                 } else if (rotationMode === 'DIARIO') {
-                    // Calculamos días exactos desde inicio
                     const diffDays = Math.floor((targetTime.getTime() - vStartDate.getTime()) / oneDay);
                     const isEvenDay = diffDays % 2 === 0;
                     effectiveCenter = isEvenDay ? startCenter : otherCenter;
@@ -244,7 +256,7 @@
                 } else if (rotationMode === 'SEGUN_GRUPO') {
                     effectiveCenter = currentCenter;
                 } else {
-                    effectiveCenter = startCenter; // Fallback
+                    effectiveCenter = startCenter;
                 }
 
                 const abs = isAbsent(v.name, dateStr);
@@ -271,32 +283,113 @@
                 }
             });
 
-            const injectVerde = (targetList, verdeName, index, role) => {
+            // 1. REPARTO BASE CORTIJOS
+            let gNormals = cortijosList.slice(0, config.cortijos.guardias);
+            let remaining = cortijosList.slice(config.cortijos.guardias);
+            
+            // Madrugas se cogen del FINAL de la lista restante para respetar antigüedad/rotación
+            const madrugaCount = config.cortijos.madrugan;
+            let mNormals = [];
+            let iNormals = [];
+
+            if (currentCenter === 'CORTIJOS') {
+                if (remaining.length >= madrugaCount) {
+                    // Los últimos N son los madrugadores
+                    mNormals = remaining.slice(remaining.length - madrugaCount);
+                    // Los del medio son los intermedios
+                    iNormals = remaining.slice(0, remaining.length - madrugaCount);
+                } else {
+                    mNormals = remaining;
+                    iNormals = [];
+                }
+            } else {
+                // Si no están en Cortijos, iNormals es todo el resto, o vacio si se usa otra logica
+                // pero este bloque es para la logica interna de Cortijos
+                iNormals = remaining;
+            }
+
+            // Reiniciamos cortijosList para reconstruirlo
+            cortijosList = [];
+
+            // 2. INYECCIÓN VERDES
+            // GUARDIAS
+            activeVerdesGuardia.forEach(v => {
+                if (currentCenter === 'CEHORPA') {
+                    // Logic Cehorpa unchanged for Guardia
+                } else {
+                    // Insertar en posición 2
+                    gNormals.splice(2, 0, { name: v.name, isVerde: true, roleOverride: 'GUARDIA' });
+                    // Si sobra gente en Guardia, el último normal pasa al PRINCIPIO de Intermedios
+                    while (gNormals.length > config.cortijos.guardias) {
+                        let displacedIndex = -1;
+                        for(let k = gNormals.length - 1; k >= 0; k--) {
+                            if(!gNormals[k].isVerde) {
+                                displacedIndex = k;
+                                break;
+                            }
+                        }
+                        if(displacedIndex !== -1) {
+                            const displaced = gNormals.splice(displacedIndex, 1)[0];
+                            iNormals.unshift(displaced);
+                        } else {
+                            const displaced = gNormals.pop();
+                            iNormals.unshift(displaced);
+                        }
+                    }
+                }
+            });
+
+            // MADRUGAS
+            activeVerdesMadruga.forEach(v => {
+                if (currentCenter === 'CEHORPA') {
+                    // Logic Cehorpa unchanged
+                } else {
+                    // En Cortijos: El Verde entra el PRIMERO de los Madrugas
+                    mNormals.unshift({ name: v.name, isVerde: true, roleOverride: 'MADRUGA' });
+                    
+                    // Si sobran madrugadores, el PRIMER normal (que es el "más alto" de la lista de madrugas) se va a Intermedios (al final)
+                    while (mNormals.length > config.cortijos.madrugan) {
+                        let displacedIndex = -1;
+                        // Buscar el primer normal
+                        for (let k = 0; k < mNormals.length; k++) {
+                             if (!mNormals[k].isVerde) {
+                                 displacedIndex = k;
+                                 break;
+                             }
+                        }
+                        if (displacedIndex !== -1) {
+                            const displaced = mNormals.splice(displacedIndex, 1)[0];
+                            iNormals.push(displaced);
+                        } else {
+                            // Si solo hay verdes y sobran, quitamos el ultimo
+                             const displaced = mNormals.pop();
+                             iNormals.push(displaced);
+                        }
+                    }
+                }
+            });
+
+            // RESTO VERDES (Intermedios)
+            remainingVerdesList.forEach(v => {
+                if (v.effectiveCenter === 'CORTIJOS' && currentCenter === 'CORTIJOS') {
+                    iNormals.push({ name: v.name, isVerde: true, roleOverride: 'INTERMEDIO' });
+                }
+            });
+
+            // HELPERS PARA CEHORPA
+            const injectVerdeLegacy = (targetList, verdeName, index, role) => {
                 const item = { name: verdeName, isVerde: true, roleOverride: role };
                 if (index > targetList.length) targetList.push(item);
                 else targetList.splice(index, 0, item);
             };
 
-            activeVerdesGuardia.forEach(v => { 
-                if (currentCenter === 'CEHORPA') injectVerde(cehorpaList, v.name, 2, 'GUARDIA'); 
-                else injectVerde(cortijosList, v.name, 2, 'GUARDIA'); 
-            });
-            activeVerdesMadruga.forEach((v, idx) => { 
-                if (currentCenter === 'CEHORPA') { 
-                    const insertIdx = config.cehorpa.guardias; 
-                    injectVerde(cehorpaList, v.name, insertIdx + idx, 'MADRUGA'); 
-                } else { 
-                    cortijosList.push({ name: v.name, isVerde: true, roleOverride: 'MADRUGA' }); 
-                } 
-            });
-
-            remainingVerdesList.forEach(v => {
-                if (v.effectiveCenter === 'CORTIJOS') {
-                    if (currentCenter === 'CORTIJOS') injectVerde(cortijosList, v.name, config.cortijos.guardias, 'INTERMEDIO');
-                } else {
-                    cehorpaList.push({ name: v.name, isVerde: true, roleOverride: 'RESTO' });
-                }
-            });
+            if (currentCenter === 'CEHORPA') {
+                activeVerdesGuardia.forEach(v => injectVerdeLegacy(cehorpaList, v.name, 2, 'GUARDIA'));
+                activeVerdesMadruga.forEach((v, idx) => injectVerdeLegacy(cehorpaList, v.name, config.cehorpa.guardias + idx, 'MADRUGA'));
+                remainingVerdesList.forEach(v => {
+                    if (v.effectiveCenter === 'CEHORPA') injectVerdeLegacy(cehorpaList, v.name, cehorpaList.length, 'RESTO');
+                });
+            }
 
             const personStatus = {};
             cNames.forEach(n => personStatus[n] = { status: 'LIBRE', time: 'L' });
@@ -318,33 +411,48 @@
                 });
             }
 
+            const LABELS_CEHORPA_MADRUGA = ["AYUDA TRASPALETA", "GUITAOR", "REPONEDOR PALET"];
+            const LABELS_CORTIJOS_MADRUGA = ["PUNTO"]; 
+
             let groups = [];
             if (currentCenter === 'CEHORPA') {
                 const { guardias, madrugan, horaResto } = config.cehorpa;
                 const g1 = cehorpaList.slice(0, guardias).map((p, i, arr) => processPerson(p, 'GUARDIA', config.cehorpa.horaGuardia, 'CEHORPA', i + 1, false, i === arr.length - 1));
-                const g2 = cehorpaList.slice(guardias, guardias + madrugan).map((p, i) => {
-                        let subRole = 'MADRUGA';
-                        let specificLabel = null;
-                        if (i === 0) specificLabel = "AYUDA TRASPALETA";
-                        if (i === 1) specificLabel = "GUITAOR";
-                        if (i === 2) specificLabel = "REPONEDOR PALET";
-                        const processed = processPerson(p, subRole, config.cehorpa.horaMadruga, 'CEHORPA', i + 1);
-                        if (specificLabel) processed.specialLabel = specificLabel;
+                
+                const rawG2 = cehorpaList.slice(guardias, guardias + madrugan);
+                const labeledG2 = assignLabelsToNormals(rawG2, LABELS_CEHORPA_MADRUGA);
+
+                const g2 = labeledG2.map((p, i) => {
+                        const processed = processPerson(p, 'MADRUGA', config.cehorpa.horaMadruga, 'CEHORPA', i + 1);
+                        if (p.specialLabel) processed.specialLabel = p.specialLabel; 
                         return processed;
                 });
                 const g3 = cehorpaList.slice(guardias + madrugan).map((p, i) => processPerson(p, 'RESTO', horaResto, 'CEHORPA'));
                 groups = [{ title: 'GUARDIA', color: 'bg-emerald-600 text-white', items: g1 }, { title: 'MADRUGAR', color: 'bg-orange-500 text-white', items: g2 }, { title: 'RESTO', color: 'bg-blue-500 text-white', items: g3 }];
             } else {
-                const { guardias, madrugan } = config.cortijos;
-                const totalPeople = cortijosList.length;
-                const startMadrugaIndex = Math.max(0, totalPeople - madrugan);
-                const c_g1 = cortijosList.slice(0, guardias).map((p, i, arr) => processPerson(p, 'GUARDIA', config.cortijos.horaGuardia, 'CORTIJOS', i + 1, false, i === arr.length - 1));
-                const c_g3 = cortijosList.slice(startMadrugaIndex).map((p, i, arr) => {
-                        const isLast = i === arr.length - 1;
-                        return processPerson(p, isLast ? 'AL PUNTO' : 'MADRUGA', config.cortijos.horaMadruga, 'CORTIJOS', i + 1, isLast);
+                const { guardias, intermedios, madrugan } = config.cortijos;
+                
+                const c_g1 = gNormals.map((p, i, arr) => processPerson(p, 'GUARDIA', config.cortijos.horaGuardia, 'CORTIJOS', i + 1, false, i === arr.length - 1));
+                
+                const c_g2 = iNormals.map((p, i) => processPerson(p, 'INTERMEDIO', config.cortijos.horaIntermedia, 'CORTIJOS', i + 1));
+                
+                // CORTIJOS: Asignar etiqueta PUNTO al ÚLTIMO normal de Madrugas
+                let lastNormalIndex = -1;
+                for (let k = mNormals.length - 1; k >= 0; k--) {
+                     if (!mNormals[k].isVerde) {
+                         lastNormalIndex = k;
+                         break;
+                     }
+                }
+
+                const c_g3 = mNormals.map((p, i) => {
+                    const processed = processPerson(p, 'MADRUGA', config.cortijos.horaMadruga, 'CORTIJOS', i + 1);
+                    if (i === lastNormalIndex) processed.specialLabel = "PUNTO";
+                    return processed;
                 });
-                const c_g2 = cortijosList.slice(guardias, startMadrugaIndex).map((p, i) => processPerson(p, 'INTERMEDIO', config.cortijos.horaIntermedia, 'CORTIJOS', i + 1));
+
                 const apoyo = cehorpaList.map((p, i) => processPerson(p, 'APOYO', config.cortijos.horaRestoCehorpa, 'CEHORPA'));
+                
                 groups = [
                     { title: 'CORTIJOS - GUARDIA', color: 'bg-emerald-600 text-white', items: c_g1 },
                     { title: 'CORTIJOS - INTERMEDIOS', color: 'bg-yellow-500 text-white', items: c_g2 },
@@ -356,6 +464,7 @@
             return { isSunday: false, date: targetDate, center: currentCenter, libra: libraName, libraStatus: 'LIBRE', groups, personStatus };
         };
 
+        // --- COMPONENTES UI (DEFINIDOS ANTES DE APP) ---
         const Header = ({ activeColla, setActiveColla, connectionStatus, onSettingsClick, onConnectClick }) => (
             <header className="bg-slate-800 text-white py-3 px-4 shadow-md sticky top-0 z-30 flex justify-between items-center shrink-0">
                 <div className="flex items-center gap-2">
@@ -548,7 +657,36 @@
             );
         };
 
+        const ConfirmationModal = ({ show, title, message, onConfirm, onCancel, isAlert }) => {
+            if (!show) return null;
+            return (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4 animate-in fade-in duration-200">
+                    <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6 relative">
+                        <h3 className="text-lg font-bold text-gray-900 mb-2">{title}</h3>
+                        <p className="text-gray-600 mb-6 text-sm">{message}</p>
+                        <div className="flex justify-end gap-2">
+                            {!isAlert && (
+                                <button onClick={onCancel} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg font-bold text-xs hover:bg-gray-200 transition">
+                                    CANCELAR
+                                </button>
+                            )}
+                            <button onClick={onConfirm} className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-bold text-xs hover:bg-emerald-700 transition shadow-sm">
+                                {isAlert ? 'ENTENDIDO' : 'CONFIRMAR'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // ==========================================
+        // 5. APP PRINCIPAL (DEFINIDA DESPUÉS)
+        // ==========================================
+
         const App = () => {
+            // ... (Resto del componente App igual que antes) ...
+            // [CÓDIGO APP COMPLETO AQUÍ ABAJO, YA SIN REFERENCIAS CIRCULARES]
+            
             const [selectedDate, setSelectedDate] = useState(new Date());
             const [activeColla, setActiveColla] = useState('1'); 
             const [globalConfig, setGlobalConfig] = useState(DEFAULT_CONFIG);
@@ -556,6 +694,9 @@
                 '1': { names: INITIAL_NAMES_COLLA1, verdes: [], refData: INITIAL_REF_DATA_COLLA1, absences: [] },
                 '2': { names: INITIAL_NAMES_COLLA2, verdes: [], refData: INITIAL_REF_DATA_COLLA2, absences: [] }
             });
+
+            // MODAL STATE
+            const [modalConfig, setModalConfig] = useState({ show: false, title: '', message: '', onConfirm: null, isAlert: false });
 
             const activeCollaData = collasData[activeColla] || { names: [], verdes: [], refData: {}, absences: [] };
             const names = (activeCollaData.names && activeCollaData.names.length > 0) ? activeCollaData.names : (activeColla === '1' ? INITIAL_NAMES_COLLA1 : INITIAL_NAMES_COLLA2);
@@ -585,19 +726,18 @@
             const [newName, setNewName] = useState("");
             const [newPosition, setNewPosition] = useState(""); 
             
-            // NEW VERDE STATE - With rotationMode
             const [newVerde, setNewVerde] = useState({ 
                 name: "", 
                 startDate: new Date().toISOString().split('T')[0],
                 startCycleIndex: 0,
                 startCenter: "CORTIJOS",
-                rotationMode: "SEMANAL", // Default mode
-                endDate: ""
+                rotationMode: "SEMANAL", 
+                endDate: "" 
             });
 
             const [transferName, setTransferName] = useState("");
             const [transferPos, setTransferPos] = useState(1);
-            const [absenceForm, setAbsenceForm] = useState({ name: '', type: 'BAJA', start: new Date().toISOString().split('T')[0], end: '' });
+            const [absenceForm, setAbsenceForm] = useState({ name: '', type: 'BAJA', start: new Date().toISOString().split('T')[0], end: '', shiftsRotation: true });
             const [tempConfig, setTempConfig] = useState(null);
             const [tempRefData, setTempRefData] = useState(null);
             const [transferSource, setTransferSource] = useState('1');
@@ -667,7 +807,10 @@
                 if (newConfig) setGlobalConfig(finalConfig);
 
                 if (supabaseClient && connectionStatus === "connected") {
-                    try { await supabaseClient.from('shift_data').upsert({ id: 'main_config', content: dataToSave }); } catch (e) { alert("Error al guardar."); }
+                    try { await supabaseClient.from('shift_data').upsert({ id: 'main_config', content: dataToSave }); } 
+                    catch (e) { 
+                        setModalConfig({ show: true, title: 'Error', message: 'Error al guardar en la nube', isAlert: true, onConfirm: () => setModalConfig({...modalConfig, show: false}) });
+                    }
                 } else { localStorage.setItem('turnos_data_v6', JSON.stringify(dataToSave)); }
             };
 
@@ -677,9 +820,27 @@
             };
 
             const handleConnectSupabase = (e) => { e.preventDefault(); if (supabaseCreds.url && supabaseCreds.key) initSupabase(supabaseCreds.url, supabaseCreds.key); };
-            const handleDisconnectSupabase = () => { localStorage.removeItem('sb_url'); localStorage.removeItem('sb_key'); setSupabaseClient(null); setConnectionStatus("disconnected"); alert("Desconectado. Modo offline."); };
+            
+            const handleDisconnectSupabase = () => { 
+                localStorage.removeItem('sb_url'); localStorage.removeItem('sb_key'); setSupabaseClient(null); setConnectionStatus("disconnected"); 
+                setModalConfig({ show: true, title: 'Desconectado', message: 'Modo offline activado.', isAlert: true, onConfirm: () => setModalConfig({...modalConfig, show: false}) });
+            };
+            
             const handleAddName = (e) => { e.preventDefault(); if (newName.trim()) { const nameToAdd = newName.toUpperCase().trim(); let updatedNames = [...names]; const pos = parseInt(newPosition); if (!isNaN(pos) && pos >= 1 && pos <= names.length + 1) { updatedNames.splice(pos - 1, 0, nameToAdd); } else { updatedNames.push(nameToAdd); } updateActiveCollaData({ names: updatedNames }); setNewName(""); setNewPosition(""); } };
-            const handleRemoveName = (idx) => { if(confirm(`¿Eliminar a ${names[idx]}?`)) { const updatedNames = names.filter((_, i) => i !== idx); updateActiveCollaData({ names: updatedNames }); } };
+            
+            const handleRemoveName = (idx) => { 
+                setModalConfig({
+                    show: true,
+                    title: 'Eliminar Persona',
+                    message: `¿Seguro que quieres eliminar a ${names[idx]}?`,
+                    isAlert: false,
+                    onConfirm: () => {
+                        const updatedNames = names.filter((_, i) => i !== idx); 
+                        updateActiveCollaData({ names: updatedNames });
+                        setModalConfig(prev => ({...prev, show: false}));
+                    }
+                });
+            };
             
             const addVerde = (e) => { 
                 e.preventDefault(); 
@@ -696,37 +857,66 @@
                     }); 
                 } 
             };
-            const removeVerde = (id) => { const updatedVerdes = verdes.filter(v => v.id !== id); updateActiveCollaData({ verdes: updatedVerdes }); };
+            
+            const removeVerde = (id) => { 
+                setModalConfig({
+                    show: true, title: 'Eliminar Verde', message: '¿Eliminar a este personal especial?', isAlert: false,
+                    onConfirm: () => {
+                        const updatedVerdes = verdes.filter(v => v.id !== id); updateActiveCollaData({ verdes: updatedVerdes });
+                        setModalConfig(prev => ({...prev, show: false}));
+                    }
+                });
+            };
             
             const handleSaveAbsence = () => {
-                const { name, type, start } = absenceForm;
-                if(!name || !type || !start) return alert("Rellena todos los campos");
-                const newAbsence = { id: Date.now(), name, type, start, end: null };
+                const { name, type, start, shiftsRotation } = absenceForm;
+                if(!name || !type || !start) return setModalConfig({ show: true, title: 'Faltan datos', message: 'Rellena todos los campos', isAlert: true, onConfirm: () => setModalConfig(prev => ({...prev, show: false})) });
+                
+                const finalEnd = absenceForm.end ? absenceForm.end : null;
+                
+                const newAbsence = { id: Date.now(), name, type, start, end: finalEnd, shiftsRotation };
                 const newAbsences = [...absences, newAbsence].sort((a,b) => a.start.localeCompare(b.start));
                 updateActiveCollaData({ absences: newAbsences });
-                setAbsenceForm({ name: '', type: 'BAJA', start: new Date().toISOString().split('T')[0], end: '' });
-                alert("Ausencia registrada.");
+                setAbsenceForm({ name: '', type: 'BAJA', start: new Date().toISOString().split('T')[0], end: '', shiftsRotation: true });
+                setModalConfig({ show: true, title: 'Guardado', message: 'Ausencia registrada correctamente.', isAlert: true, onConfirm: () => setModalConfig(prev => ({...prev, show: false})) });
             };
+            
             const handleEndAbsence = (id) => {
                 const today = new Date().toISOString().split('T')[0];
                 const newAbsences = absences.map(a => { if (a.id === id) return { ...a, end: today }; return a; });
                 updateActiveCollaData({ absences: newAbsences });
             };
-            const handleDeleteAbsence = (id) => { if(confirm("¿Eliminar?")) { const newAbsences = absences.filter(a => a.id !== id); updateActiveCollaData({ absences: newAbsences }); } };
+            
+            const handleDeleteAbsence = (id) => { 
+                setModalConfig({
+                    show: true, title: 'Borrar Ausencia', message: '¿Eliminar este registro de ausencia?', isAlert: false,
+                    onConfirm: () => {
+                        const newAbsences = absences.filter(a => a.id !== id); updateActiveCollaData({ absences: newAbsences });
+                        setModalConfig(prev => ({...prev, show: false}));
+                    }
+                });
+            };
+            
             const handleTransfer = () => {
-                if (!transferName) return alert("Selecciona a alguien.");
-                const sourceCollaId = transferSource; const targetCollaId = transferSource === '1' ? '2' : '1';
-                if (!confirm(`¿Mover a ${transferName}?`)) return;
-                const sourceNames = [...collasData[sourceCollaId].names];
-                const targetNames = [...collasData[targetCollaId].names];
-                const idx = sourceNames.indexOf(transferName); if(idx===-1) return;
-                sourceNames.splice(idx, 1);
-                let pos = parseInt(transferPos); if(isNaN(pos) || pos < 1) pos = 1; if(pos > targetNames.length+1) pos = targetNames.length+1;
-                targetNames.splice(pos-1, 0, transferName);
-                const newCollasData = { ...collasData, [sourceCollaId]: {...collasData[sourceCollaId], names: sourceNames}, [targetCollaId]: {...collasData[targetCollaId], names: targetNames} };
-                saveAllData(newCollasData);
-                setTransferName(""); setTransferPos(1);
-                alert("Traspaso realizado.");
+                if (!transferName) return setModalConfig({ show: true, title: 'Error', message: 'Selecciona a alguien.', isAlert: true, onConfirm: () => setModalConfig(prev => ({...prev, show: false})) });
+                
+                setModalConfig({
+                    show: true, title: 'Traspaso', message: `¿Mover a ${transferName} a la otra colla?`, isAlert: false,
+                    onConfirm: () => {
+                        const sourceCollaId = transferSource; const targetCollaId = transferSource === '1' ? '2' : '1';
+                        const sourceNames = [...collasData[sourceCollaId].names];
+                        const targetNames = [...collasData[targetCollaId].names];
+                        const idx = sourceNames.indexOf(transferName); 
+                        if(idx===-1) return;
+                        sourceNames.splice(idx, 1);
+                        let pos = parseInt(transferPos); if(isNaN(pos) || pos < 1) pos = 1; if(pos > targetNames.length+1) pos = targetNames.length+1;
+                        targetNames.splice(pos-1, 0, transferName);
+                        const newCollasData = { ...collasData, [sourceCollaId]: {...collasData[sourceCollaId], names: sourceNames}, [targetCollaId]: {...collasData[targetCollaId], names: targetNames} };
+                        saveAllData(newCollasData);
+                        setTransferName(""); setTransferPos(1);
+                        setModalConfig(prev => ({...prev, show: false}));
+                    }
+                });
             };
 
             useEffect(() => { if (showSettings) { setTempConfig(globalConfig); setTempRefData(refData); setTransferSource(activeColla); } }, [showSettings, globalConfig, refData, activeColla]);
@@ -824,7 +1014,7 @@
                         } 
                         for(let i=3; i<6; i++) { 
                             const d = weekData[i]; const info = d.data[name]; const dayName = d.shortName.substring(0,2); let val = "⚪"; 
-                            if(info?.status === 'BAJA') val = "🚑"; else if(info?.status === 'VACACIONES') val = "🏖️"; else if(info?.status === 'WORK') { let displayTime = info.display || info.time.split(':')[0].replace(/^0/, ''); let centerCode = info.center === 'CEHORPA' ? 'CEH' : 'COR'; let emoji = "🔵"; if (info.role && info.role.includes('GUARDIA')) emoji = "🟢"; else if (info.role && info.role.includes('MADRUGA')) emoji = "🟠"; else if (info.role && info.role.includes('INTERMEDIO')) emoji = "🟡"; let extra = ""; if(info.isFlejador) extra = "F"; if(info.special) extra = "P"; if(extra) extra = `(${extra})`; val = `${emoji} ${centerCode} ${displayTime}${extra}`; } else { val = "⚪ LIBRE"; } line1 += `${dayName}: ${val}  `; 
+                            if(info?.status === 'BAJA') val = "🚑"; else if(info?.status === 'VACACIONES') val = "🏖️"; else if(info?.status === 'WORK') { let displayTime = info.display || info.time.split(':')[0].replace(/^0/, ''); let centerCode = info.center === 'CEHORPA' ? 'CEH' : 'COR'; let emoji = "🔵"; if (info.role && info.role.includes('GUARDIA')) emoji = "🟢"; else if (info.role && info.role.includes('MADRUGA')) emoji = "🟠"; else if (info.role && info.role.includes('INTERMEDIO')) emoji = "🟡"; let extra = ""; if(info.isFlejador) extra = "F"; if(info.special) extra = "P"; if(extra) extra = `(${extra})`; val = `${emoji} ${centerCode} ${displayTime}${extra}`; } else { val = "⚪ LIBRE"; } line2 += `${dayName}: ${val}  `; 
                         } 
                         text += `${line1}\n${line2}\n\n`; 
                     }); 
@@ -905,6 +1095,16 @@
                         onStats={calculateMonthlyStats} onShare={handleShare}
                         weekData={weekData}
                         handlePrev={handlePrev} handleNext={handleNext} handleToday={handleToday} isToday={isToday(selectedDate)}
+                    />
+
+                    {/* MODAL GLOBAL */}
+                    <ConfirmationModal 
+                        show={modalConfig.show} 
+                        title={modalConfig.title} 
+                        message={modalConfig.message} 
+                        onConfirm={modalConfig.onConfirm} 
+                        onCancel={() => setModalConfig(prev => ({ ...prev, show: false }))}
+                        isAlert={modalConfig.isAlert}
                     />
 
                     {/* Modals & Overlays */}
@@ -1017,10 +1217,14 @@
                                 <div className="space-y-4">
                                     <div><label className="block text-xs font-bold text-gray-500 mb-1">Persona</label><select className="w-full border rounded p-2 text-sm" value={absenceForm.name} onChange={e => setAbsenceForm({...absenceForm, name: e.target.value})}><option value="">Selecciona...</option>{names.map(n => <option key={n} value={n}>{n}</option>)}{verdes.map(n => <option key={n.name} value={n.name}>{n.name} (Verde)</option>)}</select></div>
                                     <div><label className="block text-xs font-bold text-gray-500 mb-1">Tipo</label><div className="flex gap-2"><button onClick={() => setAbsenceForm({...absenceForm, type: 'BAJA'})} className={`flex-1 py-2 rounded text-sm font-bold border ${absenceForm.type === 'BAJA' ? 'bg-red-500 text-white border-red-600' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>BAJA</button><button onClick={() => setAbsenceForm({...absenceForm, type: 'VACACIONES'})} className={`flex-1 py-2 rounded text-sm font-bold border ${absenceForm.type === 'VACACIONES' ? 'bg-green-500 text-white border-green-600' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>VACACIONES</button></div></div>
-                                    <div className="grid grid-cols-2 gap-4"><div><label className="block text-xs font-bold text-gray-500 mb-1">Desde</label><input type="date" className="w-full border rounded p-2 text-sm" value={absenceForm.start} onChange={e => setAbsenceForm({...absenceForm, start: e.target.value})} /></div></div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div><label className="block text-xs font-bold text-gray-500 mb-1">Desde</label><input type="date" className="w-full border rounded p-2 text-sm" value={absenceForm.start} onChange={e => setAbsenceForm({...absenceForm, start: e.target.value})} /></div>
+                                        <div><label className="block text-xs font-bold text-gray-500 mb-1">Hasta (Opcional)</label><input type="date" className="w-full border rounded p-2 text-sm" value={absenceForm.end} onChange={e => setAbsenceForm({...absenceForm, end: e.target.value})} /></div>
+                                    </div>
+                                    <div className="flex items-center h-10 w-full bg-slate-50 border rounded px-2"><input type="checkbox" id="shiftsRotation" className="w-4 h-4 mr-2" checked={absenceForm.shiftsRotation} onChange={e => setAbsenceForm({...absenceForm, shiftsRotation: e.target.checked})} /><label htmlFor="shiftsRotation" className="text-xs font-bold text-gray-600 cursor-pointer select-none">¿Corre Turno?</label></div>
                                     <button onClick={handleSaveAbsence} className="w-full bg-slate-800 text-white py-3 rounded-lg font-bold shadow hover:bg-slate-700">AÑADIR AUSENCIA</button>
                                 </div>
-                                <div className="mt-4 pt-4 border-t border-red-100"><h4 className="text-xs font-bold text-red-400 uppercase tracking-widest mb-3">Ausencias Registradas</h4>{activeAbsencesList.length > 0 ? (<div className="space-y-2">{activeAbsencesList.map((item, idx) => { const isActive = !item.end; return (<div key={idx} className="flex justify-between items-center bg-white p-2 rounded border border-red-100 text-xs"><div className="flex flex-col"><div className="flex items-center gap-2"><span className="font-bold text-gray-800">{item.name}</span><span className={`px-1.5 rounded text-[9px] font-bold ${item.status === 'BAJA' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>{item.status}</span></div><span className="font-mono text-gray-500 text-[10px]">Desde {item.start} {item.end ? `hasta ${item.end}` : '(En curso)'}</span></div><div className="flex gap-2">{isActive && <button onClick={() => handleEndAbsence(item.id)} className="text-white bg-green-500 hover:bg-green-600 px-2 py-1 rounded text-[9px] font-bold">DAR ALTA</button>}<button onClick={() => handleDeleteAbsence(item.id)} className="text-red-400 hover:text-red-600 p-1"><Icon path={Icons.Trash} className="w-4 h-4" /></button></div></div>)})}</div>) : (<p className="text-xs text-gray-400 italic text-center">No hay ausencias registradas.</p>)}</div>
+                                <div className="mt-4 pt-4 border-t border-red-100"><h4 className="text-xs font-bold text-red-400 uppercase tracking-widest mb-3">Ausencias Registradas</h4>{activeAbsencesList.length > 0 ? (<div className="space-y-2">{activeAbsencesList.map((item, idx) => { const isActive = !item.end; return (<div key={idx} className="flex justify-between items-center bg-white p-2 rounded border border-red-100 text-xs"><div className="flex flex-col"><div className="flex items-center gap-2"><span className="font-bold text-gray-800">{item.name}</span><span className={`px-1.5 rounded text-[9px] font-bold ${item.status === 'BAJA' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>{item.status}</span></div><span className="font-mono text-gray-500 text-[10px]">Desde {item.start} {item.end ? `hasta ${item.end}` : '(En curso)'}</span><span className="text-[9px] text-gray-400 italic">{item.shiftsRotation ? 'Corre turno' : 'No corre turno'}</span></div><div className="flex gap-2">{isActive && <button onClick={() => handleEndAbsence(item.id)} className="text-white bg-green-500 hover:bg-green-600 px-2 py-1 rounded text-[9px] font-bold">DAR ALTA</button>}<button onClick={() => handleDeleteAbsence(item.id)} className="text-red-400 hover:text-red-600 p-1"><Icon path={Icons.Trash} className="w-4 h-4" /></button></div></div>)})}</div>) : (<p className="text-xs text-gray-400 italic text-center">No hay ausencias registradas.</p>)}</div>
                             </div>
                             <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6"><h3 className="text-xl font-bold text-slate-800 mb-6 border-b pb-2 flex items-center gap-2"><Icon path={Icons.Users} className="w-6 h-6" /> GESTIÓN DE PERSONAL ({COLLA_NAMES[activeColla]})</h3><form onSubmit={handleAddName} className="flex gap-3 mb-6"><input type="text" placeholder="Nuevo Nombre..." className="flex-1 border-2 border-slate-200 rounded-lg p-3 text-lg uppercase" value={newName} onChange={(e) => setNewName(e.target.value)} /><input type="number" placeholder="POS" min="1" max={names.length + 1} className="w-16 border-2 border-slate-200 rounded-lg p-2 text-center text-sm font-bold" value={newPosition} onChange={(e) => setNewPosition(e.target.value)} /><button type="submit" className="bg-blue-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-blue-700 flex items-center gap-2 shadow-sm"><Icon path={Icons.Plus} className="w-5 h-5" /> AÑADIR</button></form><div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">{names.map((name, idx) => (<div key={idx} className="flex items-center justify-between bg-slate-50 p-2 rounded border border-slate-200 group"><div className="flex items-center gap-2 overflow-hidden"><span className="bg-slate-200 text-slate-600 text-xs font-mono w-6 h-6 flex items-center justify-center rounded-full shrink-0">{idx + 1}</span><span className="font-bold text-slate-700 truncate text-sm">{name}</span></div><button onClick={() => handleRemoveName(idx)} className="text-slate-300 hover:text-red-500 hover:bg-red-50 p-1 rounded transition"><Icon path={Icons.Trash} className="w-4 h-4" /></button></div>))}</div></div>
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -1082,7 +1286,6 @@
                                     </div>
                                 </div>
                             </div>
-                            <div className="bg-gradient-to-r from-slate-100 to-white rounded-xl shadow-sm border border-slate-300 p-6"><h3 className="text-xl font-bold text-slate-900 mb-4 border-b pb-2 flex items-center gap-2"><Icon path={Icons.Rotate} className="w-6 h-6 text-blue-600" /> PUNTO DE PARTIDA ({COLLA_NAMES[activeColla]})</h3><div className="grid grid-cols-1 md:grid-cols-3 gap-6"><div><label className="block text-sm font-bold text-gray-700 mb-1">Fecha de Inicio</label><input type="date" className="w-full p-3 border rounded-lg text-lg font-mono" value={tempRefData.dateString} onChange={(e) => setTempRefData({...tempRefData, dateString: e.target.value})} /></div><div><label className="block text-sm font-bold text-gray-700 mb-1">Primer Guardia (Nº 1)</label><select className="w-full p-3 border rounded-lg text-lg font-bold text-slate-700" value={tempRefData.firstGuardName} onChange={(e) => setTempRefData({...tempRefData, firstGuardName: e.target.value})}>{names.map(name => <option key={name} value={name}>{name}</option>)}</select></div><div><label className="block text-sm font-bold text-gray-700 mb-1">Centro ese día</label><div className="flex gap-0 rounded-lg overflow-hidden border border-gray-300 h-[50px]"><button onClick={() => setTempRefData({...tempRefData, center: 'CORTIJOS'})} className={`flex-1 font-bold transition ${tempRefData.center === 'CORTIJOS' ? 'bg-emerald-600 text-white' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}>CORTIJOS</button><button onClick={() => setTempRefData({...tempRefData, center: 'CEHORPA'})} className={`flex-1 font-bold transition ${tempRefData.center === 'CEHORPA' ? 'bg-blue-600 text-white' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}>CEHORPA</button></div></div></div></div>
                             <div className="bg-green-50 rounded-xl shadow-sm border border-green-200 p-6">
                                 <h3 className="text-xl font-bold text-green-800 mb-6 border-b border-green-200 pb-2 flex items-center gap-2"><Icon path={Icons.Leaf} className="w-6 h-6" /> LOS VERDES (Personal Especial)</h3>
                                 <div className="bg-white p-4 rounded-lg border border-green-100 mb-4">
