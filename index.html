@@ -1,0 +1,1145 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulador de Turnos (Supabase) - Refactorizado</title>
+    
+    <!-- TAILWIND CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- REACT & REACT DOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- BABEL -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- SUPABASE JS -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    
+    <style>
+        body { -webkit-tap-highlight-color: transparent; background-color: #f9fafb; }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+        .date-btn-container { position: relative; }
+        .date-input-hidden {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            opacity: 0; cursor: pointer; z-index: 20;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
+
+        // ==========================================
+        // 1. CONSTANTES Y CONFIGURACIÓN INICIAL
+        // ==========================================
+        const PRECONFIGURED_URL = "https://dwccmujoouxzovbhndpx.supabase.co";
+        const PRECONFIGURED_KEY = "sb_publishable_x7wvlT-vPhu5p8i5k7Wa-Q_yb3s1slS"; 
+        const COLLA_NAMES = { '1': 'RAYO', '2': 'MIGUEL SEXI' };
+
+        const INITIAL_NAMES_COLLA1 = ["CORTES", "UTRERA", "MANGUI", "LEKIO", "LARRI", "FRANCI", "COCINERO", "ROMARIO", "RIVAS", "EXTRABOT", "DIEGUEZ", "CHANCHI", "MAKINA", "SANTANA", "COLORAO", "EMILIO", "GORRI"];
+        const INITIAL_REF_DATA_COLLA1 = { dateString: "2025-12-06", firstGuardName: "CORTES", center: "CORTIJOS" };
+        const INITIAL_NAMES_COLLA2 = ["MIGUEL SEXI", "MIGUEL VALLES", "MOLERO", "MANU", "JESÚS", "MANOLO ZAPATA", "ABRAR", "JOSE", "MARTÍNEZ", "ZEUS", "CHITO", "CAMILO", "CHEMA", "RAFAEL", "AGUSTÍN"]; 
+        const INITIAL_REF_DATA_COLLA2 = { dateString: "2025-12-06", firstGuardName: "ABRAR", center: "CEHORPA" };
+
+        const DEFAULT_CONFIG = {
+            cehorpa: { guardias: 6, madrugan: 4, horaGuardia: "10:00", horaMadruga: "07:00", horaResto: "09:00" },
+            cortijos: { capacidad: 8, guardias: 4, intermedios: 2, madrugan: 2, horaGuardia: "10:00", horaIntermedia: "08:00", horaMadruga: "07:00", horaRestoCehorpa: "09:00" }
+        };
+
+        const VERDE_ROTATION = [{ guardia: [1, 4], madruga: [3, 6] }, { guardia: [2, 5], madruga: [1, 4] }, { guardia: [3, 6], madruga: [2, 5] }];
+
+        // ==========================================
+        // 2. ICONOS (Componentes UI puros)
+        // ==========================================
+        const Icon = ({ path, className }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>{path}</svg>
+        );
+        const Icons = {
+            Cal: <><rect width="18" height="18" x="3" y="4" rx="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></>,
+            Set: <><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.47a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.35a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></>,
+            Search: <><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></>,
+            Share: <><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/></>,
+            Moon: <><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></>,
+            Map: <><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></>,
+            Coffee: <><path d="M10 2v2"/><path d="M14 2v2"/><path d="M16 8a1 1 0 0 1 1 1v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1h14a4 4 0 0 1 4 4v1a4 4 0 0 1-4 4h-1"/><line x1="6" x2="6" y1="2" y2="4"/></>,
+            Users: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></>,
+            Rotate: <><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></>,
+            X: <><path d="M18 6 6 18"/><path d="m6 6 12 12"/></>,
+            Plus: <><path d="M5 12h14"/><path d="M12 5v14"/></>,
+            Trash: <><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></>,
+            Arrow: <><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></>,
+            Chart: <><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></>,
+            Swap: <><path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/></>,
+            Bandage: <><path d="M14 12a2 2 0 1 0 4 0 2 2 0 0 0-4 0"/><path d="m10.24 3.96 8.8 8.8a3 3 0 0 1 0 4.24l-4.24 4.25a3 3 0 0 1-4.24 0l-8.8-8.8a3 3 0 0 1 0-4.25l4.25-4.24a3 3 0 0 1 4.24 0Z"/><path d="m18 10-8 8"/></>,
+            Leaf: <><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/></>
+        };
+
+        // ==========================================
+        // 3. MOTOR DE LÓGICA (Funciones Puras)
+        // ==========================================
+        
+        const getMonday = (d) => { 
+            const dObj = new Date(d); 
+            const day = dObj.getDay(); 
+            const diff = dObj.getDate() - day + (day === 0 ? -6 : 1); 
+            const mon = new Date(dObj.setDate(diff)); 
+            mon.setHours(0,0,0,0); 
+            return mon; 
+        };
+
+        const calculateSimulation = (targetDate, targetCollaId, collasData, config) => {
+            const cData = collasData[targetCollaId];
+            if (!cData || !cData.names || cData.names.length === 0) return null; 
+            
+            const cNames = cData.names;
+            const cVerdes = cData.verdes || [];
+            const cRefData = cData.refData || (targetCollaId === '1' ? INITIAL_REF_DATA_COLLA1 : INITIAL_REF_DATA_COLLA2);
+            const cAbsencesList = cData.absences || [];
+
+            const isAbsent = (pName, dStr) => {
+                return cAbsencesList.find(a => {
+                    if (a.name !== pName) return false;
+                    const activeStart = a.start;
+                    const activeEnd = a.end || '9999-12-31';
+                    return dStr >= activeStart && dStr < activeEnd;
+                });
+            };
+
+            const dayOfWeek = targetDate.getDay();
+            if (dayOfWeek === 0) return { isSunday: true, date: targetDate };
+
+            const dateStr = targetDate.toISOString().split('T')[0];
+            const [ry, rm, rd] = (cRefData.dateString || "2025-12-06").split('-').map(Number);
+            const refDateObj = new Date(ry, rm - 1, rd);
+            const oneDay = 24 * 60 * 60 * 1000;
+            const refMonday = getMonday(refDateObj);
+            const targetMonday = getMonday(targetDate);
+            const diffWeeksTime = targetMonday.getTime() - refMonday.getTime();
+            const weeksPassed = Math.round(diffWeeksTime / (oneDay * 7));
+            const CENTERS = ['CORTIJOS', 'CEHORPA'];
+            const refCenterIndex = cRefData.center === 'CORTIJOS' ? 0 : 1;
+            const refDayOfWeekIndex = (refDateObj.getDay() + 6) % 7; 
+            const refWeekParity = ((refCenterIndex - refDayOfWeekIndex) % 2 + 2) % 2;
+            const targetWeekParity = ((refWeekParity + weeksPassed) % 2 + 2) % 2;
+            const targetDayIndex = (dayOfWeek + 6) % 7; 
+            const targetCenterIndex = (targetWeekParity + targetDayIndex) % 2;
+            let currentCenter = CENTERS[targetCenterIndex];
+
+            // --- LÓGICA DE ROTACIÓN "CORREACTURNO" ---
+            let currentDate = new Date(refDateObj); currentDate.setHours(0,0,0,0);
+            const targetTime = new Date(targetDate); targetTime.setHours(0,0,0,0);
+            let currentHeadName = cRefData.firstGuardName; 
+            if (!cNames.includes(currentHeadName)) currentHeadName = cNames[0];
+
+            const direction = targetTime >= currentDate ? 1 : -1;
+            let guard = 0;
+            
+            while (currentDate.getTime() !== targetTime.getTime() && guard < 10000) {
+                guard++;
+                const nextDate = new Date(currentDate); 
+                nextDate.setDate(currentDate.getDate() + direction);
+                const dw = nextDate.getDay();
+                const nextDateStr = nextDate.toISOString().split('T')[0];
+
+                if (dw !== 0) { 
+                    if (direction === 1) {
+                        let startIndex = cNames.indexOf(currentHeadName);
+                        if (startIndex === -1) startIndex = 0;
+                        let found = false; let offset = 1;
+                        while (!found && offset < cNames.length * 2) {
+                            const candidateName = cNames[(startIndex + offset) % cNames.length];
+                            if (!isAbsent(candidateName, nextDateStr)) { currentHeadName = candidateName; found = true; }
+                            offset++;
+                        }
+                    } else {
+                        let startIndex = cNames.indexOf(currentHeadName);
+                        if (startIndex === -1) startIndex = 0;
+                        let found = false; let offset = 1;
+                        while (!found && offset < cNames.length * 2) {
+                            const candidateName = cNames[(startIndex - offset + cNames.length * 2) % cNames.length];
+                            if (!isAbsent(candidateName, nextDateStr)) { currentHeadName = candidateName; found = true; }
+                            offset++;
+                        }
+                    }
+                }
+                currentDate = nextDate;
+            }
+
+            const absentPeople = [];
+            const activePeople = [];
+            let headStartIndex = cNames.indexOf(currentHeadName);
+            for (let i = 0; i < cNames.length; i++) {
+                const name = cNames[(headStartIndex + i) % cNames.length];
+                const abs = isAbsent(name, dateStr);
+                if (abs) { absentPeople.push({ name, status: abs.type, isVerde: false }); } else { activePeople.push({ name, isVerde: false }); }
+            }
+
+            let libraName = "N/A";
+            if (activePeople.length > 0) {
+                const libraPerson = activePeople.pop(); 
+                libraName = libraPerson.name;
+            }
+            
+            let cortijosList, cehorpaList;
+            if (currentCenter === 'CORTIJOS') {
+                cortijosList = activePeople.slice(0, config.cortijos.capacidad);
+                cehorpaList = activePeople.slice(config.cortijos.capacidad);
+            } else {
+                cortijosList = [];
+                cehorpaList = activePeople; 
+            }
+
+            // --- LÓGICA VERDES MEJORADA (CON MODOS AVANZADOS) ---
+            const activeVerdesGuardia = [];
+            const activeVerdesMadruga = [];
+            const remainingVerdesList = [];
+
+            cVerdes.forEach(v => {
+                const vStartDate = v.startDate ? new Date(v.startDate) : new Date(refDateObj);
+                vStartDate.setHours(0,0,0,0);
+                
+                // Filtro por Fecha de Inicio
+                if (targetTime < vStartDate.getTime()) return;
+
+                // Filtro por Fecha Fin (Opcional)
+                if (v.endDate) {
+                    const vEndDate = new Date(v.endDate);
+                    vEndDate.setHours(0,0,0,0);
+                    if (targetTime > vEndDate.getTime()) return;
+                }
+
+                const vStartMonday = getMonday(vStartDate);
+                const diffTime = targetMonday.getTime() - vStartMonday.getTime();
+                const verdeWeeksPassed = Math.round(diffTime / (oneDay * 7));
+
+                const baseCycle = v.startCycleIndex !== undefined ? parseInt(v.startCycleIndex) : (v.offset ? parseInt(v.offset) : 0);
+                const currentCycleIndex = ((baseCycle + verdeWeeksPassed) % 3 + 3) % 3;
+                const pattern = VERDE_ROTATION[currentCycleIndex];
+
+                const startCenter = v.startCenter || (v.centerMode === 'CORTIJOS' ? 'CORTIJOS' : 'CEHORPA');
+                const otherCenter = startCenter === 'CORTIJOS' ? 'CEHORPA' : 'CORTIJOS';
+                let effectiveCenter = 'CEHORPA';
+
+                // LÓGICA DE ROTACIÓN DE CENTRO
+                // Compatible con legacy 'rotatesCenter' boolean
+                const rotationMode = v.rotationMode || (v.rotatesCenter ? 'SEMANAL' : 'FIJO');
+
+                if (rotationMode === 'SEMANAL') {
+                    const isEvenWeek = verdeWeeksPassed % 2 === 0;
+                    effectiveCenter = isEvenWeek ? startCenter : otherCenter;
+                } else if (rotationMode === 'DIARIO') {
+                    // Calculamos días exactos desde inicio
+                    const diffDays = Math.floor((targetTime.getTime() - vStartDate.getTime()) / oneDay);
+                    const isEvenDay = diffDays % 2 === 0;
+                    effectiveCenter = isEvenDay ? startCenter : otherCenter;
+                } else if (rotationMode === 'FIJO') {
+                    effectiveCenter = startCenter;
+                } else if (rotationMode === 'SEGUN_GRUPO') {
+                    effectiveCenter = currentCenter;
+                } else {
+                    effectiveCenter = startCenter; // Fallback
+                }
+
+                const abs = isAbsent(v.name, dateStr);
+                if (abs) { 
+                    absentPeople.push({ name: v.name, status: abs.type, isVerde: true }); 
+                    return; 
+                }
+
+                const centerOk = (effectiveCenter === currentCenter);
+                let assigned = false;
+
+                if (pattern.guardia.includes(dayOfWeek) && centerOk) {
+                    activeVerdesGuardia.push({ ...v, effectiveCenter });
+                    assigned = true;
+                } else if (pattern.madruga.includes(dayOfWeek) && centerOk) {
+                    if (!activeVerdesGuardia.find(g => g.name === v.name)) {
+                        activeVerdesMadruga.push({ ...v, effectiveCenter });
+                        assigned = true;
+                    }
+                }
+
+                if (!assigned) {
+                    remainingVerdesList.push({ ...v, effectiveCenter });
+                }
+            });
+
+            const injectVerde = (targetList, verdeName, index, role) => {
+                const item = { name: verdeName, isVerde: true, roleOverride: role };
+                if (index > targetList.length) targetList.push(item);
+                else targetList.splice(index, 0, item);
+            };
+
+            activeVerdesGuardia.forEach(v => { 
+                if (currentCenter === 'CEHORPA') injectVerde(cehorpaList, v.name, 2, 'GUARDIA'); 
+                else injectVerde(cortijosList, v.name, 2, 'GUARDIA'); 
+            });
+            activeVerdesMadruga.forEach((v, idx) => { 
+                if (currentCenter === 'CEHORPA') { 
+                    const insertIdx = config.cehorpa.guardias; 
+                    injectVerde(cehorpaList, v.name, insertIdx + idx, 'MADRUGA'); 
+                } else { 
+                    cortijosList.push({ name: v.name, isVerde: true, roleOverride: 'MADRUGA' }); 
+                } 
+            });
+
+            remainingVerdesList.forEach(v => {
+                if (v.effectiveCenter === 'CORTIJOS') {
+                    if (currentCenter === 'CORTIJOS') injectVerde(cortijosList, v.name, config.cortijos.guardias, 'INTERMEDIO');
+                } else {
+                    cehorpaList.push({ name: v.name, isVerde: true, roleOverride: 'RESTO' });
+                }
+            });
+
+            const personStatus = {};
+            cNames.forEach(n => personStatus[n] = { status: 'LIBRE', time: 'L' });
+            cVerdes.forEach(v => personStatus[v.name] = { status: 'LIBRE', time: 'L' });
+            absentPeople.forEach(p => { personStatus[p.name] = { status: p.status, name: p.name, isVerde: p.isVerde }; });
+            
+            if (libraName !== "N/A") { personStatus[libraName] = { status: 'LIBRE', time: 'L' }; }
+
+            const processPerson = (p, role, time, center, rank, special, isFlejador) => {
+                let display = time.split(':')[0].replace(/^0/, '');
+                if (rank) display += `.${rank}`;
+                personStatus[p.name] = { status: 'WORK', display, ...p, center, isFlejador, special, role, rank, time };
+                return { ...p, time, role, realCenter: center, rank, isFlejador, special, status: 'WORK' };
+            };
+            
+            if (currentCenter === 'CEHORPA') {
+                remainingVerdesList.forEach(v => {
+                    if (v.effectiveCenter === 'CORTIJOS') processPerson({name: v.name, isVerde: true}, 'INTERMEDIO', config.cortijos.horaIntermedia, 'CORTIJOS');
+                });
+            }
+
+            let groups = [];
+            if (currentCenter === 'CEHORPA') {
+                const { guardias, madrugan, horaResto } = config.cehorpa;
+                const g1 = cehorpaList.slice(0, guardias).map((p, i, arr) => processPerson(p, 'GUARDIA', config.cehorpa.horaGuardia, 'CEHORPA', i + 1, false, i === arr.length - 1));
+                const g2 = cehorpaList.slice(guardias, guardias + madrugan).map((p, i) => {
+                        let subRole = 'MADRUGA';
+                        let specificLabel = null;
+                        if (i === 0) specificLabel = "AYUDA TRASPALETA";
+                        if (i === 1) specificLabel = "GUITAOR";
+                        if (i === 2) specificLabel = "REPONEDOR PALET";
+                        const processed = processPerson(p, subRole, config.cehorpa.horaMadruga, 'CEHORPA', i + 1);
+                        if (specificLabel) processed.specialLabel = specificLabel;
+                        return processed;
+                });
+                const g3 = cehorpaList.slice(guardias + madrugan).map((p, i) => processPerson(p, 'RESTO', horaResto, 'CEHORPA'));
+                groups = [{ title: 'GUARDIA', color: 'bg-emerald-600 text-white', items: g1 }, { title: 'MADRUGAR', color: 'bg-orange-500 text-white', items: g2 }, { title: 'RESTO', color: 'bg-blue-500 text-white', items: g3 }];
+            } else {
+                const { guardias, madrugan } = config.cortijos;
+                const totalPeople = cortijosList.length;
+                const startMadrugaIndex = Math.max(0, totalPeople - madrugan);
+                const c_g1 = cortijosList.slice(0, guardias).map((p, i, arr) => processPerson(p, 'GUARDIA', config.cortijos.horaGuardia, 'CORTIJOS', i + 1, false, i === arr.length - 1));
+                const c_g3 = cortijosList.slice(startMadrugaIndex).map((p, i, arr) => {
+                        const isLast = i === arr.length - 1;
+                        return processPerson(p, isLast ? 'AL PUNTO' : 'MADRUGA', config.cortijos.horaMadruga, 'CORTIJOS', i + 1, isLast);
+                });
+                const c_g2 = cortijosList.slice(guardias, startMadrugaIndex).map((p, i) => processPerson(p, 'INTERMEDIO', config.cortijos.horaIntermedia, 'CORTIJOS', i + 1));
+                const apoyo = cehorpaList.map((p, i) => processPerson(p, 'APOYO', config.cortijos.horaRestoCehorpa, 'CEHORPA'));
+                groups = [
+                    { title: 'CORTIJOS - GUARDIA', color: 'bg-emerald-600 text-white', items: c_g1 },
+                    { title: 'CORTIJOS - INTERMEDIOS', color: 'bg-yellow-500 text-white', items: c_g2 },
+                    { title: 'CORTIJOS - MADRUGAR', color: 'bg-orange-500 text-white', items: c_g3 },
+                    { title: 'APOYO A CEHORPA', color: 'bg-blue-500 text-white', items: apoyo }
+                ];
+            }
+            if (absentPeople.length > 0) groups.push({ title: 'AUSENCIAS / BAJAS', color: 'bg-red-500 text-white', items: absentPeople });
+            return { isSunday: false, date: targetDate, center: currentCenter, libra: libraName, libraStatus: 'LIBRE', groups, personStatus };
+        };
+
+        const Header = ({ activeColla, setActiveColla, connectionStatus, onSettingsClick, onConnectClick }) => (
+            <header className="bg-slate-800 text-white py-3 px-4 shadow-md sticky top-0 z-30 flex justify-between items-center shrink-0">
+                <div className="flex items-center gap-2">
+                    <div className="bg-white/10 p-1.5 rounded-lg"><Icon path={Icons.Cal} className="w-5 h-5" /></div>
+                    <h1 className="font-bold text-base tracking-tight">Simulador</h1>
+                </div>
+                <div className="flex items-center bg-slate-700/50 rounded-lg p-1 border border-slate-600">
+                    <button onClick={() => setActiveColla('1')} className={`px-3 py-1 rounded text-[10px] font-bold transition ${activeColla === '1' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400 hover:text-white'}`}>RAYO</button>
+                    <button onClick={() => setActiveColla('2')} className={`px-3 py-1 rounded text-[10px] font-bold transition ${activeColla === '2' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400 hover:text-white'}`}>MIGUEL SEXI</button>
+                </div>
+                <div className="flex items-center gap-2">
+                    {connectionStatus === "connected" 
+                        ? <span onClick={onConnectClick} className="w-2 h-2 rounded-full bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.8)] cursor-pointer"></span> 
+                        : <span onClick={onConnectClick} className="w-2 h-2 rounded-full bg-red-400 cursor-pointer"></span>}
+                    <button onClick={onSettingsClick} className="p-2 rounded-full bg-white/10 hover:bg-white/20 transition relative z-40"><Icon path={Icons.Set} className="w-5 h-5" /></button>
+                </div>
+            </header>
+        );
+
+        const ControlBar = ({ selectedDate, setSelectedDate, viewMode, setViewMode, onSearch, onStats, onShare, weekData, handlePrev, handleNext, handleToday, isToday }) => (
+            <div className="bg-white shadow-sm border-b border-gray-200 p-3 shrink-0 z-10">
+                <div className="max-w-lg mx-auto flex flex-col gap-3">
+                    <div className="flex items-stretch gap-2">
+                        <div className="flex-1 flex items-center justify-between bg-gray-50 rounded-xl p-1 border border-gray-200 relative">
+                            <button onClick={handlePrev} className="p-2 rounded-lg hover:bg-white hover:shadow-sm text-slate-500 transition active:scale-95"><Icon path={Icons.Arrow} className="w-4 h-4 rotate-180" /></button>
+                            <div className="flex-1 flex flex-col items-center justify-center relative date-btn-container">
+                                <div className="flex items-center gap-1.5 bg-white px-2 py-1 rounded-lg border border-gray-100 shadow-sm">
+                                    <Icon path={Icons.Cal} className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                                    <div className="text-sm font-black text-slate-800 leading-none uppercase">
+                                            {viewMode === 'weekly' && weekData ? 
+                                                `${weekData[0].date.toLocaleDateString('es-ES', {day:'numeric', month:'short'})} - ${weekData[5].date.toLocaleDateString('es-ES', {day:'numeric', month:'short'})}`
+                                                : selectedDate.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' }).replace('.', '')
+                                            }
+                                    </div>
+                                </div>
+                                <input type="date" className="date-input-hidden" value={selectedDate.toISOString().split('T')[0]} onChange={(e) => setSelectedDate(new Date(e.target.value))} />
+                            </div>
+                            <button onClick={handleNext} className="p-2 rounded-lg hover:bg-white hover:shadow-sm text-slate-500 transition active:scale-95"><Icon path={Icons.Arrow} className="w-4 h-4" /></button>
+                        </div>
+                        <button onClick={handleToday} className={`px-3 rounded-xl font-bold text-white shadow-sm flex items-center justify-center transition active:scale-95 ${isToday ? 'bg-green-300' : 'bg-green-500 hover:bg-green-600'}`} disabled={isToday}>HOY</button>
+                    </div>
+                    <div className="flex gap-2">
+                        <div className="flex bg-gray-100 p-1 rounded-lg shrink-0">
+                            <button onClick={() => setViewMode('daily')} className={`px-3 py-1.5 rounded-md text-[10px] font-bold transition ${viewMode === 'daily' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>DÍA</button>
+                            <button onClick={() => setViewMode('weekly')} className={`px-3 py-1.5 rounded-md text-[10px] font-bold transition ${viewMode === 'weekly' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>SEMANA</button>
+                        </div>
+                        <div className="w-px bg-gray-200 mx-1"></div>
+                        <button onClick={onSearch} className="flex-1 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 rounded-lg flex items-center justify-center gap-2 text-[10px] font-bold transition active:scale-95"><Icon path={Icons.Search} className="w-4 h-4" /> BUSCAR</button>
+                        <button onClick={onStats} className="flex-1 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 rounded-lg flex items-center justify-center gap-2 text-[10px] font-bold transition active:scale-95"><Icon path={Icons.Chart} className="w-4 h-4" /> STATS</button>
+                        <button onClick={onShare} className="flex-1 bg-green-500 text-white hover:bg-green-600 rounded-lg flex items-center justify-center gap-2 text-[10px] font-bold shadow-sm transition active:scale-95"><Icon path={Icons.Share} className="w-4 h-4" /> WHATSAPP</button>
+                    </div>
+                </div>
+            </div>
+        );
+
+        const DailyView = ({ simulation }) => {
+            if (!simulation) return null;
+            if (simulation.isSunday) return (
+                <div className="flex flex-col items-center justify-center py-12 bg-white rounded shadow-sm border border-dashed border-gray-300 mt-4">
+                    <Icon path={Icons.Coffee} className="w-12 h-12 text-gray-300 mb-2" />
+                    <h2 className="text-2xl font-bold text-gray-400">Domingo</h2>
+                </div>
+            );
+
+            return (
+                <div className="space-y-2 mt-2">
+                    <div className="grid grid-cols-2 gap-2">
+                        <div className={`rounded px-3 py-3 text-white flex justify-between items-center shadow-sm ${simulation.center === 'CORTIJOS' ? 'bg-gradient-to-r from-emerald-600 to-emerald-500' : 'bg-gradient-to-r from-blue-600 to-blue-500'}`}>
+                            <div><p className="text-[10px] font-black opacity-80 uppercase">Centro</p><h2 className="text-xl font-bold leading-none">{simulation.center}</h2></div>
+                            <Icon path={Icons.Map} className="w-6 h-6 opacity-40" />
+                        </div>
+                        <div className="rounded px-3 py-3 bg-white border border-red-100 flex justify-between items-center shadow-sm">
+                            <div><p className="text-[10px] font-black text-red-400 uppercase">Libra Hoy</p><h2 className="text-xl font-bold text-gray-800 leading-none">{simulation.libra}</h2></div>
+                            <Icon path={Icons.Moon} className="w-6 h-6 text-red-200" />
+                        </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 items-start">
+                        {simulation.groups.map((group, idx) => (
+                            <div key={idx} className="bg-white rounded-lg shadow-sm border border-slate-100 overflow-hidden">
+                                <div className={`px-2 py-1.5 text-[10px] font-black uppercase flex justify-between ${group.color}`}>
+                                    <span>{group.title}</span><span className="bg-black/20 px-1.5 rounded text-white">{group.items.length}</span>
+                                </div>
+                                <div className="divide-y divide-slate-100">
+                                    {group.items.map((p, i) => (
+                                        <div key={i} className={`px-2 py-2 flex flex-col relative ${p.status === 'BAJA' ? 'bg-red-50' : p.status === 'VACACIONES' ? 'bg-green-50' : 'bg-white'}`}>
+                                            {p.status === 'BAJA' && <div className="absolute inset-0 flex items-center justify-center text-red-300 font-black opacity-20 text-3xl rotate-[-10deg] pointer-events-none">BAJA</div>}
+                                            {p.status === 'VACACIONES' && <div className="absolute inset-0 flex items-center justify-center text-green-300 font-black opacity-20 text-2xl rotate-[-10deg] pointer-events-none">VACACIONES</div>}
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <span className="bg-slate-200 text-slate-700 text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full">{p.rank || '-'}</span>
+                                                <span className={`text-sm font-bold truncate ${p.isVerde ? 'text-green-700' : 'text-slate-800'}`}>{p.name} {p.isVerde && '🌿'}</span>
+                                            </div>
+                                            <div className="flex justify-between items-center pl-7">
+                                                <span className="text-xs font-black px-2 py-0.5 bg-slate-100 rounded border">{p.time}</span>
+                                                {p.specialLabel && (
+                                                    <div className="absolute right-2 top-2 bg-yellow-100 text-yellow-800 text-[7px] font-black px-1.5 py-0.5 rounded border border-yellow-300 shadow-sm uppercase tracking-tight max-w-[80px] text-right leading-tight">
+                                                        {p.specialLabel}
+                                                    </div>
+                                                )}
+                                                <div className="flex gap-1">
+                                                    {p.special && <span className="text-[8px] bg-purple-100 text-purple-800 px-1 rounded font-bold border border-purple-200 shadow-sm">PUNTO</span>}
+                                                    {p.isFlejador && <span className="text-[8px] bg-indigo-100 text-indigo-800 px-1 rounded font-bold border border-indigo-200 shadow-sm">FLEJA</span>}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        const WeeklyView = ({ weekData, names, verdes }) => {
+            const getCellClass = (info) => {
+                if(!info) return '';
+                if(info.status === 'LIBRE') return 'bg-gray-300 text-gray-800 font-bold'; 
+                if(info.status === 'BAJA') return 'bg-red-600 text-white font-bold border-r border-red-700'; 
+                if(info.status === 'VACACIONES') return 'bg-green-600 text-white font-bold border-r border-green-700'; 
+                if(info.role && info.role.includes('GUARDIA')) return 'bg-emerald-600 text-white font-bold border-r border-emerald-700';
+                if(info.role && info.role.includes('MADRUGA')) return 'bg-orange-500 text-white font-bold border-r border-orange-600';
+                if(info.role && info.role.includes('INTERMEDIO')) return 'bg-yellow-500 text-black font-bold border-r border-yellow-600';
+                return 'bg-blue-600 text-white font-bold border-r border-blue-700'; 
+            };
+
+            const getCellContent = (info) => {
+                if(!info) return '';
+                if(info.status === 'LIBRE') return <span className="text-[10px]">LIBRE</span>;
+                if(info.status === 'BAJA') return <span className="text-[10px] block">BAJA</span>;
+                if(info.status === 'VACACIONES') return <span className="text-[10px] block">VACAS</span>;
+                return (
+                    <div className="flex flex-col items-center justify-center h-full">
+                        <span className="text-xs font-black leading-none">{info.display}</span>
+                        {info.specialLabel && <span className="text-[6px] uppercase tracking-tighter leading-none mt-0.5">{info.specialLabel.split(' ')[0]}</span>}
+                        <div className="flex gap-0.5 mt-0.5">
+                            {info.isFlejador && <span className="text-[8px] bg-black/30 px-1 rounded font-bold">F</span>}
+                            {info.special && <span className="text-[8px] bg-black/30 px-1 rounded font-bold">P</span>}
+                        </div>
+                    </div>
+                );
+            };
+
+            if (!weekData) return null;
+
+            return (
+                <div className="flex-1 bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden flex flex-col max-h-[75vh] mt-2">
+                    <div className="overflow-auto flex-1 scrollbar-hide">
+                        <table className="w-full text-left border-collapse">
+                            <thead className="bg-slate-100 sticky top-0 z-10 shadow-sm">
+                                <tr>
+                                    <th className="p-2 text-[10px] font-black text-slate-600 uppercase border-b border-r bg-slate-100 sticky left-0 z-20 min-w-[80px] shadow-md">Nombre</th>
+                                    {weekData.map((d, i) => (
+                                        <th key={i} className="p-2 text-center border-b min-w-[70px] bg-gray-50">
+                                            <div className="flex flex-col items-center"><span className="text-[9px] font-bold text-slate-500">{d.shortName} <span className="text-slate-900 text-[11px]">{d.date.getDate()}</span></span><span className={`text-[8px] font-black px-1.5 rounded-full ${d.center==='CORTIJOS'?'bg-emerald-100 text-emerald-700':'bg-blue-100 text-blue-700'}`}>{d.center==='CORTIJOS'?'COR':'CEH'}</span></div>
+                                        </th>
+                                    ))}
+                                    <th className="p-2 text-center border-b bg-gray-100 min-w-[30px] text-[9px] font-bold text-slate-500">T</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                                {verdes.length > 0 && <tr className="bg-green-50"><td colSpan={8} className="p-1 text-xs font-bold text-green-800 text-center border-b border-green-100">🌿 LOS VERDES</td></tr>}
+                                {names.map((name, idx) => {
+                                    const daysWorked = weekData.filter(d => d.data[name]?.status === 'WORK').length;
+                                    return (
+                                    <tr key={name} className={idx%2===0?'bg-white':'bg-slate-50'}>
+                                        <td className="p-2 text-[10px] font-bold text-slate-800 border-r sticky left-0 z-10 bg-inherit shadow-md truncate max-w-[90px]">{name}</td>
+                                        {weekData.map((d, i) => {
+                                            const info = d.data[name];
+                                            return <td key={i} className={`p-1 text-center border-r border-slate-100 ${getCellClass(info)}`}>{getCellContent(info)}</td>;
+                                        })}
+                                        <td className="text-center font-bold text-xs bg-gray-50 text-slate-400 border-l">{daysWorked}</td>
+                                    </tr>
+                                )})}
+                                {verdes.map((v, idx) => {
+                                    const daysWorked = weekData.filter(d => d.data[v.name]?.status === 'WORK').length;
+                                    return (
+                                    <tr key={v.name} className="bg-green-50/50">
+                                        <td className="p-2 text-[10px] font-bold text-green-900 border-r sticky left-0 z-10 bg-green-50 shadow-md truncate max-w-[90px]">{v.name} 🌿</td>
+                                        {weekData.map((d, i) => {
+                                            const info = d.data[v.name];
+                                                return <td key={i} className={`p-1 text-center border-r border-green-100 ${getCellClass(info)}`}>{getCellContent(info)}</td>;
+                                        })}
+                                        <td className="text-center font-bold text-xs bg-green-100/50 text-green-700 border-l">{daysWorked}</td>
+                                    </tr>
+                                )})}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [selectedDate, setSelectedDate] = useState(new Date());
+            const [activeColla, setActiveColla] = useState('1'); 
+            const [globalConfig, setGlobalConfig] = useState(DEFAULT_CONFIG);
+            const [collasData, setCollasData] = useState({
+                '1': { names: INITIAL_NAMES_COLLA1, verdes: [], refData: INITIAL_REF_DATA_COLLA1, absences: [] },
+                '2': { names: INITIAL_NAMES_COLLA2, verdes: [], refData: INITIAL_REF_DATA_COLLA2, absences: [] }
+            });
+
+            const activeCollaData = collasData[activeColla] || { names: [], verdes: [], refData: {}, absences: [] };
+            const names = (activeCollaData.names && activeCollaData.names.length > 0) ? activeCollaData.names : (activeColla === '1' ? INITIAL_NAMES_COLLA1 : INITIAL_NAMES_COLLA2);
+            const verdes = activeCollaData.verdes || [];
+            const refData = (activeCollaData.refData && activeCollaData.refData.dateString) ? activeCollaData.refData : (activeColla === '1' ? INITIAL_REF_DATA_COLLA1 : INITIAL_REF_DATA_COLLA2);
+            const absences = activeCollaData.absences || []; 
+            const activeAbsencesList = absences.map(a => ({ ...a, status: a.type })).sort((a,b) => a.start.localeCompare(b.start));
+
+            const [supabaseClient, setSupabaseClient] = useState(null);
+            const [supabaseCreds, setSupabaseCreds] = useState({ url: PRECONFIGURED_URL, key: PRECONFIGURED_KEY });
+            const [connectionStatus, setConnectionStatus] = useState("disconnected");
+            const [showSupabaseModal, setShowSupabaseModal] = useState(false);
+
+            const [viewMode, setViewMode] = useState('daily');
+            const [showSettings, setShowSettings] = useState(false);
+            const [showSearch, setShowSearch] = useState(false);
+            const [showStats, setShowStats] = useState(false);
+            const [simulation, setSimulation] = useState(null);
+            const [monthlyStats, setMonthlyStats] = useState(null);
+            
+            const [searchType, setSearchType] = useState('person'); 
+            const [searchPerson, setSearchPerson] = useState("");
+            const [searchDateQuery, setSearchDateQuery] = useState(new Date().toISOString().split('T')[0]);
+            const [searchRange, setSearchRange] = useState(7);
+            const [searchResults, setSearchResults] = useState(null);
+
+            const [newName, setNewName] = useState("");
+            const [newPosition, setNewPosition] = useState(""); 
+            
+            // NEW VERDE STATE - With rotationMode
+            const [newVerde, setNewVerde] = useState({ 
+                name: "", 
+                startDate: new Date().toISOString().split('T')[0],
+                startCycleIndex: 0,
+                startCenter: "CORTIJOS",
+                rotationMode: "SEMANAL", // Default mode
+                endDate: ""
+            });
+
+            const [transferName, setTransferName] = useState("");
+            const [transferPos, setTransferPos] = useState(1);
+            const [absenceForm, setAbsenceForm] = useState({ name: '', type: 'BAJA', start: new Date().toISOString().split('T')[0], end: '' });
+            const [tempConfig, setTempConfig] = useState(null);
+            const [tempRefData, setTempRefData] = useState(null);
+            const [transferSource, setTransferSource] = useState('1');
+
+            useEffect(() => {
+                const savedUrl = localStorage.getItem('sb_url') || PRECONFIGURED_URL;
+                const savedKey = localStorage.getItem('sb_key') || PRECONFIGURED_KEY;
+
+                if (savedUrl && savedKey) {
+                    setSupabaseCreds({ url: savedUrl, key: savedKey });
+                    initSupabase(savedUrl, savedKey);
+                } else {
+                    const savedLocal = localStorage.getItem('turnos_data_v6'); 
+                    if(savedLocal) {
+                        try {
+                            const parsed = JSON.parse(savedLocal);
+                            if(parsed.collas) sanitizeAndSetCollas(parsed.collas);
+                            if(parsed.config) setGlobalConfig(parsed.config);
+                        } catch(e) {}
+                    }
+                }
+            }, []);
+
+            const sanitizeAndSetCollas = (loadedCollas) => {
+                const safeCollas = { ...collasData };
+                ['1', '2'].forEach(key => {
+                    const loaded = loadedCollas[key];
+                    if (loaded) {
+                        safeCollas[key] = {
+                            names: (loaded.names && loaded.names.length > 0) ? loaded.names : (key === '1' ? INITIAL_NAMES_COLLA1 : INITIAL_NAMES_COLLA2),
+                            verdes: loaded.verdes || [],
+                            refData: loaded.refData || (key === '1' ? INITIAL_REF_DATA_COLLA1 : INITIAL_REF_DATA_COLLA2),
+                            absences: loaded.absences || []
+                        };
+                    }
+                });
+                setCollasData(safeCollas);
+            };
+
+            const initSupabase = async (url, key) => {
+                try {
+                    const client = window.supabase.createClient(url, key);
+                    setSupabaseClient(client);
+                    const { data, error } = await client.from('shift_data').select('*').eq('id', 'main_config').single();
+                    if (error && error.code !== 'PGRST116') { setConnectionStatus("error"); return; }
+                    setConnectionStatus("connected");
+                    localStorage.setItem('sb_url', url);
+                    localStorage.setItem('sb_key', key);
+                    setShowSupabaseModal(false);
+
+                    if (data && data.content) {
+                        const content = data.content;
+                        if (content.collas) sanitizeAndSetCollas(content.collas);
+                        if (content.config) setGlobalConfig(content.config);
+                    }
+                } catch (e) { setConnectionStatus("error"); }
+            };
+
+            const saveAllData = async (newCollasData = null, newConfig = null) => {
+                const finalCollas = newCollasData || collasData;
+                const finalConfig = newConfig || globalConfig;
+                if(!finalCollas['1'].names || finalCollas['1'].names.length === 0) finalCollas['1'].names = INITIAL_NAMES_COLLA1;
+                if(!finalCollas['2'].names || finalCollas['2'].names.length === 0) finalCollas['2'].names = INITIAL_NAMES_COLLA2;
+                
+                const dataToSave = { collas: finalCollas, config: finalConfig };
+                if (newCollasData) setCollasData(finalCollas);
+                if (newConfig) setGlobalConfig(finalConfig);
+
+                if (supabaseClient && connectionStatus === "connected") {
+                    try { await supabaseClient.from('shift_data').upsert({ id: 'main_config', content: dataToSave }); } catch (e) { alert("Error al guardar."); }
+                } else { localStorage.setItem('turnos_data_v6', JSON.stringify(dataToSave)); }
+            };
+
+            const updateActiveCollaData = (updates) => {
+                const newCollas = { ...collasData, [activeColla]: { ...collasData[activeColla], ...updates } };
+                saveAllData(newCollas);
+            };
+
+            const handleConnectSupabase = (e) => { e.preventDefault(); if (supabaseCreds.url && supabaseCreds.key) initSupabase(supabaseCreds.url, supabaseCreds.key); };
+            const handleDisconnectSupabase = () => { localStorage.removeItem('sb_url'); localStorage.removeItem('sb_key'); setSupabaseClient(null); setConnectionStatus("disconnected"); alert("Desconectado. Modo offline."); };
+            const handleAddName = (e) => { e.preventDefault(); if (newName.trim()) { const nameToAdd = newName.toUpperCase().trim(); let updatedNames = [...names]; const pos = parseInt(newPosition); if (!isNaN(pos) && pos >= 1 && pos <= names.length + 1) { updatedNames.splice(pos - 1, 0, nameToAdd); } else { updatedNames.push(nameToAdd); } updateActiveCollaData({ names: updatedNames }); setNewName(""); setNewPosition(""); } };
+            const handleRemoveName = (idx) => { if(confirm(`¿Eliminar a ${names[idx]}?`)) { const updatedNames = names.filter((_, i) => i !== idx); updateActiveCollaData({ names: updatedNames }); } };
+            
+            const addVerde = (e) => { 
+                e.preventDefault(); 
+                if(newVerde.name) { 
+                    const updatedVerdes = [...verdes, { ...newVerde, id: Date.now() }]; 
+                    updateActiveCollaData({ verdes: updatedVerdes }); 
+                    setNewVerde({ 
+                        name: "", 
+                        startDate: new Date().toISOString().split('T')[0], 
+                        startCycleIndex: 0, 
+                        startCenter: "CORTIJOS", 
+                        rotationMode: "SEMANAL", 
+                        endDate: "" 
+                    }); 
+                } 
+            };
+            const removeVerde = (id) => { const updatedVerdes = verdes.filter(v => v.id !== id); updateActiveCollaData({ verdes: updatedVerdes }); };
+            
+            const handleSaveAbsence = () => {
+                const { name, type, start } = absenceForm;
+                if(!name || !type || !start) return alert("Rellena todos los campos");
+                const newAbsence = { id: Date.now(), name, type, start, end: null };
+                const newAbsences = [...absences, newAbsence].sort((a,b) => a.start.localeCompare(b.start));
+                updateActiveCollaData({ absences: newAbsences });
+                setAbsenceForm({ name: '', type: 'BAJA', start: new Date().toISOString().split('T')[0], end: '' });
+                alert("Ausencia registrada.");
+            };
+            const handleEndAbsence = (id) => {
+                const today = new Date().toISOString().split('T')[0];
+                const newAbsences = absences.map(a => { if (a.id === id) return { ...a, end: today }; return a; });
+                updateActiveCollaData({ absences: newAbsences });
+            };
+            const handleDeleteAbsence = (id) => { if(confirm("¿Eliminar?")) { const newAbsences = absences.filter(a => a.id !== id); updateActiveCollaData({ absences: newAbsences }); } };
+            const handleTransfer = () => {
+                if (!transferName) return alert("Selecciona a alguien.");
+                const sourceCollaId = transferSource; const targetCollaId = transferSource === '1' ? '2' : '1';
+                if (!confirm(`¿Mover a ${transferName}?`)) return;
+                const sourceNames = [...collasData[sourceCollaId].names];
+                const targetNames = [...collasData[targetCollaId].names];
+                const idx = sourceNames.indexOf(transferName); if(idx===-1) return;
+                sourceNames.splice(idx, 1);
+                let pos = parseInt(transferPos); if(isNaN(pos) || pos < 1) pos = 1; if(pos > targetNames.length+1) pos = targetNames.length+1;
+                targetNames.splice(pos-1, 0, transferName);
+                const newCollasData = { ...collasData, [sourceCollaId]: {...collasData[sourceCollaId], names: sourceNames}, [targetCollaId]: {...collasData[targetCollaId], names: targetNames} };
+                saveAllData(newCollasData);
+                setTransferName(""); setTransferPos(1);
+                alert("Traspaso realizado.");
+            };
+
+            useEffect(() => { if (showSettings) { setTempConfig(globalConfig); setTempRefData(refData); setTransferSource(activeColla); } }, [showSettings, globalConfig, refData, activeColla]);
+            const saveSettingsToCloud = () => { saveAllData(null, tempConfig); updateActiveCollaData({ refData: tempRefData }); setShowSettings(false); };
+
+            useEffect(() => { setSimulation(calculateSimulation(selectedDate, activeColla, collasData, globalConfig)); }, [selectedDate, globalConfig, collasData, activeColla]);
+
+            const calculateMonthlyStats = () => {
+                const today = new Date();
+                const year = selectedDate.getFullYear();
+                const month = selectedDate.getMonth();
+                const daysInMonth = new Date(year, month + 1, 0).getDate();
+                const stats = {};
+                [...names, ...verdes.map(v=>v.name)].forEach(n => stats[n] = { days: 0, guardia: 0, madruga: 0, baja: 0 });
+
+                for(let i=1; i<=daysInMonth; i++) {
+                    const d = new Date(year, month, i);
+                    if(d.getDay() !== 0) { 
+                        const sim = calculateSimulation(d, activeColla, collasData, globalConfig);
+                        if(sim && sim.personStatus) {
+                            Object.entries(sim.personStatus).forEach(([name, status]) => {
+                                if(stats[name]) {
+                                    if(status.status === 'WORK') {
+                                        stats[name].days++;
+                                        if(status.role && status.role.includes('GUARDIA')) stats[name].guardia++;
+                                        if(status.role && status.role.includes('MADRUGA')) stats[name].madruga++;
+                                    } else if(status.status === 'BAJA') {
+                                        stats[name].baja++;
+                                    }
+                                }
+                            });
+                        }
+                    }
+                }
+                setMonthlyStats(stats);
+                setShowStats(true);
+            };
+
+            const weekData = useMemo(() => {
+                if (!names || !names.length) return null; 
+                const current = new Date(selectedDate);
+                const day = current.getDay();
+                const diff = current.getDate() - day + (day === 0 ? -6 : 1);
+                const monday = new Date(current.setDate(diff));
+                const days = [];
+                for (let i = 0; i < 6; i++) {
+                    const d = new Date(monday); d.setDate(monday.getDate() + i);
+                    const sim = calculateSimulation(d, activeColla, collasData, globalConfig);
+                    days.push({ date: d, shortName: d.toLocaleDateString('es-ES', { weekday: 'short' }).toUpperCase(), center: sim ? sim.center : '-', data: sim ? sim.personStatus : {} });
+                }
+                return days;
+            }, [selectedDate, globalConfig, collasData, activeColla, names]); 
+
+            const handlePrev = () => { const d = new Date(selectedDate); d.setDate(d.getDate() - (viewMode === 'weekly' ? 7 : 1)); setSelectedDate(d); };
+            const handleNext = () => { const d = new Date(selectedDate); d.setDate(d.getDate() + (viewMode === 'weekly' ? 7 : 1)); setSelectedDate(d); };
+            const handleToday = () => setSelectedDate(new Date());
+            const isToday = (d) => { const today = new Date(); return d.getDate() === today.getDate() && d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear(); };
+            
+            const shareText = async (text) => { window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank'); };
+            const handleShare = () => { 
+                if (viewMode === 'daily') { 
+                    if (!simulation) return; 
+                    const dateStr = simulation.date.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }); 
+                    let text = `📅 *${dateStr.toUpperCase()}* - ${COLLA_NAMES[activeColla]}\n`; 
+                    if (simulation.isSunday) text += `☕ *DOMINGO* - Descanso\n`; 
+                    else { 
+                        text += `📍 *Centro:* ${simulation.center}\n🌙 *Libra:* ${simulation.libra}\n--------------------------------\n`; 
+                        simulation.groups.forEach(g => { 
+                            text += `\n*${g.title}* (${g.items.length})\n`; 
+                            g.items.forEach((item, idx) => { 
+                                let badges = ""; 
+                                if (item.status === 'BAJA') text += `🚑 ${item.name} (BAJA)\n`;
+                                else if (item.status === 'VACACIONES') text += `🏖️ ${item.name} (VACACIONES)\n`;
+                                else {
+                                    if (item.special) badges += " 🟣"; if (item.isFlejador) badges += " 🛠️"; 
+                                    let labelText = item.specialLabel ? ` [${item.specialLabel}]` : "";
+                                    let displayTime = item.display ? item.display : item.time;
+                                    text += `${idx + 1}. ${item.name} ${displayTime}${labelText}${badges}\n`; 
+                                }
+                            }); 
+                        }); 
+                    } 
+                    text += `\nSimulador de Turnos`; shareText(text); 
+                } else { 
+                    if (!weekData) return; 
+                    const weekStart = weekData[0].date.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }); 
+                    const weekEnd = weekData[5].date.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }); 
+                    let text = `📅 *SEMANA ${weekStart} - ${weekEnd}* (${COLLA_NAMES[activeColla]})\n\n`; 
+                    [...names, ...verdes.map(v => v.name)].forEach(name => { 
+                        text += `👤 *${name}*\n`; 
+                        let line1 = ""; let line2 = ""; 
+                        for(let i=0; i<3; i++) { 
+                            const d = weekData[i]; const info = d.data[name]; const dayName = d.shortName.substring(0,2); let val = "⚪"; 
+                            if(info?.status === 'BAJA') val = "🚑"; else if(info?.status === 'VACACIONES') val = "🏖️"; else if(info?.status === 'WORK') { let displayTime = info.display || info.time.split(':')[0].replace(/^0/, ''); let centerCode = info.center === 'CEHORPA' ? 'CEH' : 'COR'; let emoji = "🔵"; if (info.role && info.role.includes('GUARDIA')) emoji = "🟢"; else if (info.role && info.role.includes('MADRUGA')) emoji = "🟠"; else if (info.role && info.role.includes('INTERMEDIO')) emoji = "🟡"; let extra = ""; if(info.isFlejador) extra = "F"; if(info.special) extra = "P"; if(extra) extra = `(${extra})`; val = `${emoji} ${centerCode} ${displayTime}${extra}`; } else { val = "⚪ LIBRE"; } line1 += `${dayName}: ${val}  `; 
+                        } 
+                        for(let i=3; i<6; i++) { 
+                            const d = weekData[i]; const info = d.data[name]; const dayName = d.shortName.substring(0,2); let val = "⚪"; 
+                            if(info?.status === 'BAJA') val = "🚑"; else if(info?.status === 'VACACIONES') val = "🏖️"; else if(info?.status === 'WORK') { let displayTime = info.display || info.time.split(':')[0].replace(/^0/, ''); let centerCode = info.center === 'CEHORPA' ? 'CEH' : 'COR'; let emoji = "🔵"; if (info.role && info.role.includes('GUARDIA')) emoji = "🟢"; else if (info.role && info.role.includes('MADRUGA')) emoji = "🟠"; else if (info.role && info.role.includes('INTERMEDIO')) emoji = "🟡"; let extra = ""; if(info.isFlejador) extra = "F"; if(info.special) extra = "P"; if(extra) extra = `(${extra})`; val = `${emoji} ${centerCode} ${displayTime}${extra}`; } else { val = "⚪ LIBRE"; } line1 += `${dayName}: ${val}  `; 
+                        } 
+                        text += `${line1}\n${line2}\n\n`; 
+                    }); 
+                    text += `Simulador de Turnos`; shareText(text); 
+                } 
+            };
+
+            const performSearch = () => {
+                if(searchType === 'person') {
+                    if (!searchPerson) return;
+                    let results = [];
+                    let iterDate = new Date(selectedDate);
+                    for (let i = 0; i < searchRange; i++) {
+                        const sim = calculateSimulation(new Date(iterDate), activeColla, collasData, globalConfig);
+                        let d = { date: new Date(iterDate), status: 'DESCONOCIDO', details: null };
+                        if (sim.isSunday) d.status = 'DOMINGO';
+                        else {
+                             const pStatus = sim.personStatus[searchPerson];
+                             if(pStatus) {
+                                 if(pStatus.status === 'LIBRE') d.status = 'LIBRA';
+                                 else if (pStatus.status === 'BAJA') { d.status = 'BAJA'; d.details = pStatus; }
+                                 else if (pStatus.status === 'VACACIONES') { d.status = 'VACACIONES'; d.details = pStatus; }
+                                 else if (pStatus.status === 'WORK') { d.status = 'TRABAJA'; d.details = pStatus; }
+                             } else { d.status = 'NO ENCONTRADO'; }
+                        }
+                        results.push(d); iterDate.setDate(iterDate.getDate() + 1);
+                    }
+                    setSearchResults(results);
+                } else if(searchType === 'guardias_libres') {
+                    if (!searchPerson) return;
+                    let results = [];
+                    let iterDate = new Date(selectedDate);
+                    let foundCount = 0;
+                    for (let i = 0; i < 120; i++) {
+                        const sim = calculateSimulation(new Date(iterDate), activeColla, collasData, globalConfig);
+                        if (sim && !sim.isSunday) {
+                            const pStatus = sim.personStatus[searchPerson];
+                            if (pStatus) {
+                                if (pStatus.status === 'LIBRE') {
+                                    results.push({ date: new Date(iterDate), type: 'LIBRE', details: pStatus });
+                                    foundCount++;
+                                } else if (pStatus.status === 'WORK' && pStatus.role === 'GUARDIA' && pStatus.rank === 1) {
+                                    results.push({ date: new Date(iterDate), type: 'GUARDIA', center: pStatus.center, details: pStatus });
+                                    foundCount++;
+                                }
+                            }
+                        }
+                        iterDate.setDate(iterDate.getDate() + 1);
+                        if (foundCount >= 10) break; 
+                    }
+                    setSearchResults(results);
+                } else {
+                    const dateParts = searchDateQuery.split('-').map(Number);
+                    const target = new Date(dateParts[0], dateParts[1]-1, dateParts[2]);
+                    const sim1 = calculateSimulation(target, '1', collasData, globalConfig);
+                    const sim2 = calculateSimulation(target, '2', collasData, globalConfig);
+                    let res = { date: target, status: 'OK', libras: [] };
+                    if(sim1 && sim1.isSunday) res.status = 'DOMINGO';
+                    else if (sim1 && sim2) {
+                        res.libras = [
+                            { colla: 'RAYO', name: sim1.libra, status: sim1.libraStatus },
+                            { colla: 'MIGUEL SEXI', name: sim2.libra, status: sim2.libraStatus }
+                        ];
+                    }
+                    setSearchResults([res]);
+                }
+            };
+
+            // RENDER
+            return (
+                <div className="min-h-screen bg-gray-50 text-gray-800 font-sans text-xs flex flex-col">
+                    <Header activeColla={activeColla} setActiveColla={setActiveColla} connectionStatus={connectionStatus} onSettingsClick={() => setShowSettings(true)} onConnectClick={() => setShowSupabaseModal(true)} />
+                    
+                    <ControlBar 
+                        selectedDate={selectedDate} setSelectedDate={setSelectedDate} 
+                        viewMode={viewMode} setViewMode={setViewMode} 
+                        onSearch={() => { setShowSearch(true); setSearchResults(null); }} 
+                        onStats={calculateMonthlyStats} onShare={handleShare}
+                        weekData={weekData}
+                        handlePrev={handlePrev} handleNext={handleNext} handleToday={handleToday} isToday={isToday(selectedDate)}
+                    />
+
+                    {/* Modals & Overlays */}
+                    {showStats && monthlyStats && (
+                        <div className="fixed inset-0 z-50 bg-black/50 flex flex-col justify-center items-center p-4 animate-in fade-in duration-200">
+                             <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md relative max-h-[80vh] flex flex-col">
+                                <button onClick={() => setShowStats(false)} className="absolute top-3 right-3 text-gray-400 hover:text-gray-600"><Icon path={Icons.X} className="w-5 h-5" /></button>
+                                <h2 className="text-xl font-bold text-gray-800 mb-1 flex items-center gap-2"><Icon path={Icons.Chart} className="w-6 h-6 text-indigo-500" /> Estadísticas Mensuales</h2>
+                                <p className="text-xs text-gray-400 mb-4 uppercase font-bold tracking-widest">{selectedDate.toLocaleString('es-ES', { month: 'long', year: 'numeric' })} - {COLLA_NAMES[activeColla]}</p>
+                                <div className="overflow-y-auto flex-1 pr-2">
+                                    <table className="w-full text-left text-xs">
+                                        <thead className="bg-gray-50 sticky top-0"><tr><th className="p-2 border-b">Nombre</th><th className="p-2 border-b text-center">Días</th><th className="p-2 border-b text-center text-emerald-600">G</th><th className="p-2 border-b text-center text-orange-600">M</th><th className="p-2 border-b text-center text-red-600">B</th></tr></thead>
+                                        <tbody className="divide-y divide-gray-100">{Object.entries(monthlyStats).sort((a,b) => b[1].days - a[1].days).map(([name, stat]) => (
+                                            <tr key={name}><td className="p-2 font-bold text-slate-700 truncate max-w-[100px]">{name}</td><td className="p-2 text-center font-bold">{stat.days}</td><td className="p-2 text-center text-emerald-600 bg-emerald-50 rounded">{stat.guardia}</td><td className="p-2 text-center text-orange-600 bg-orange-50 rounded">{stat.madruga}</td><td className="p-2 text-center text-red-600">{stat.baja > 0 ? stat.baja : '-'}</td></tr>
+                                        ))}</tbody>
+                                    </table>
+                                </div>
+                             </div>
+                        </div>
+                    )}
+
+                    {showSupabaseModal && ( <div className="fixed inset-0 z-[150] bg-black/50 flex flex-col justify-center items-center p-4 animate-in fade-in duration-200"> <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md relative"> <button onClick={() => setShowSupabaseModal(false)} className="absolute top-3 right-3 text-gray-400 hover:text-gray-600"><Icon path={Icons.X} className="w-5 h-5" /></button> <h2 className="text-xl font-bold text-center mb-4">Estado Conexión</h2> <p className="text-center mb-4">{connectionStatus === 'connected' ? 'Conectado a la nube' : 'Desconectado'}</p> {connectionStatus === 'connected' && <button onClick={handleDisconnectSupabase} className="w-full bg-red-100 text-red-600 py-2 rounded font-bold">Desconectar</button>} {connectionStatus !== 'connected' && <form onSubmit={handleConnectSupabase} className="space-y-3"><input type="text" placeholder="URL" className="w-full border p-2" value={supabaseCreds.url} onChange={e => setSupabaseCreds({...supabaseCreds, url:e.target.value})} /><input type="password" placeholder="Key" className="w-full border p-2" value={supabaseCreds.key} onChange={e => setSupabaseCreds({...supabaseCreds, key:e.target.value})} /><button className="w-full bg-emerald-600 text-white py-2 rounded font-bold">Conectar</button></form>} </div> </div> )}
+
+                    {showSearch && ( <div className="fixed inset-0 z-50 bg-white flex flex-col p-4 animate-in fade-in duration-200"> 
+                        <div className="flex justify-between mb-4"><h2 className="text-xl font-bold">Buscador</h2><button onClick={() => setShowSearch(false)}><Icon path={Icons.X} className="w-6 h-6" /></button></div> 
+                        <div className="bg-white p-2 rounded-lg shadow-sm border border-gray-200 mb-3">
+                            <div className="flex border-b mb-3">
+                                <button onClick={() => { setSearchType('person'); setSearchResults(null); }} className={`flex-1 py-2 text-center font-bold ${searchType === 'person' ? 'text-emerald-600 border-b-2 border-emerald-600' : 'text-gray-400'}`}>Por Persona</button>
+                                <button onClick={() => { setSearchType('date'); setSearchResults(null); }} className={`flex-1 py-2 text-center font-bold ${searchType === 'date' ? 'text-emerald-600 border-b-2 border-emerald-600' : 'text-gray-400'}`}>¿Quién Libra?</button>
+                                <button onClick={() => { setSearchType('guardias_libres'); setSearchResults(null); }} className={`flex-1 py-2 text-center font-bold text-[10px] uppercase ${searchType === 'guardias_libres' ? 'text-emerald-600 border-b-2 border-emerald-600' : 'text-gray-400'}`}>Guardias/Libres</button>
+                            </div>
+                            {searchType === 'person' || searchType === 'guardias_libres' ? (
+                                <div className="flex gap-2 mb-2">
+                                    <select className="flex-1 p-2 border rounded text-sm font-bold bg-gray-50" value={searchPerson} onChange={(e) => setSearchPerson(e.target.value)}><option value="">Selecciona Persona...</option>{names.map(n => <option key={n} value={n}>{n}</option>)}{verdes.map(v => <option key={v.name} value={v.name}>{v.name} (Verde)</option>)}</select>
+                                    {searchType === 'person' && <div className="flex rounded border overflow-hidden shrink-0"><button onClick={() => setSearchRange(7)} className={`px-3 py-2 text-xs font-bold ${searchRange === 7 ? 'bg-emerald-100 text-emerald-800' : 'bg-white'}`}>7D</button><button onClick={() => setSearchRange(30)} className={`px-3 py-2 text-xs font-bold ${searchRange === 30 ? 'bg-emerald-100 text-emerald-800' : 'bg-white'}`}>30D</button></div>}
+                                </div>
+                            ) : (<div className="mb-2"><input type="date" className="w-full p-3 border rounded text-lg font-bold text-center" value={searchDateQuery} onChange={e => setSearchDateQuery(e.target.value)} /></div>)}
+                            <button onClick={performSearch} disabled={(searchType !== 'date' && !searchPerson)} className="w-full bg-emerald-600 text-white py-2 rounded font-bold text-sm">VER RESULTADO</button>
+                        </div>
+                        {searchResults && (<div className="pb-10 animate-in slide-in-from-bottom-2 fade-in duration-300 flex-1 overflow-y-auto">
+                            {/* SEARCH RESULTS UI */}
+                            {searchType === 'person' ? (
+                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                                    {searchResults.map((res, idx) => (
+                                        <div key={idx} className={`rounded-lg border-2 shadow-sm p-1.5 flex flex-col justify-between min-h-[95px] relative overflow-hidden ${res.status === 'DOMINGO' ? 'bg-slate-300 border-slate-500' : res.status === 'LIBRA' ? 'bg-gray-300 border-gray-500' : res.status === 'BAJA' ? 'bg-red-300 border-red-500' : res.status === 'VACACIONES' ? 'bg-green-300 border-green-500' : (res.details?.role||'').includes('GUARDIA') ? 'bg-emerald-300 border-emerald-500' : (res.details?.role||'').includes('MADRUGA') ? 'bg-orange-300 border-orange-500' : 'bg-blue-300 border-blue-500'}`}>
+                                            <div className="flex justify-between items-start mb-1">
+                                                <div className="text-center leading-tight bg-white/50 rounded px-1 min-w-[30px]"><div className="text-[9px] font-bold text-black uppercase">{res.date.toLocaleDateString('es-ES', { weekday: 'short' })}</div><div className="text-sm font-black text-black">{res.date.getDate()}</div></div>
+                                                {res.status === 'TRABAJA' && <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-black/80 text-white uppercase tracking-tighter shadow-sm">{res.details.center.substring(0,3)}</span>}
+                                            </div>
+                                            <div className="flex-1 flex flex-col justify-center items-center">
+                                                {res.status === 'DOMINGO' && <div className="text-slate-500 flex flex-col items-center"><Icon path={Icons.Coffee} className="w-6 h-6 mb-0.5 text-slate-600" /><span className="text-[10px] font-black">DOMINGO</span></div>}
+                                                {res.status === 'LIBRA' && <div className="text-red-700 flex flex-col items-center"><Icon path={Icons.Moon} className="w-6 h-6 mb-0.5 text-red-600" /><span className="text-[11px] font-black">LIBRA</span></div>}
+                                                {res.status === 'TRABAJA' && <div className="text-center w-full bg-white/40 rounded py-1"><div className="text-2xl font-black text-black leading-none mb-0.5 tracking-tight">{res.details.time}</div><div className="text-[10px] font-bold text-black uppercase flex items-center justify-center gap-1">{res.details.role}</div></div>}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : searchType === 'guardias_libres' ? (
+                                <div className="space-y-2">
+                                    <h3 className="text-center font-bold text-slate-500 text-xs mb-2 uppercase tracking-widest">Próximos Eventos (Guardia 1 / Libre)</h3>
+                                    {searchResults.map((res, idx) => (
+                                        <div key={idx} className={`flex items-center p-3 rounded-lg shadow-sm border-l-4 ${res.type === 'LIBRE' ? 'bg-red-50 border-red-500' : 'bg-emerald-50 border-emerald-500'}`}>
+                                            <div className="bg-white/80 rounded px-2 py-1 text-center mr-3 min-w-[50px] shadow-sm">
+                                                <div className="text-[10px] font-bold text-slate-500 uppercase">{res.date.toLocaleDateString('es-ES', { weekday: 'short' })}</div>
+                                                <div className="text-xl font-black text-slate-800 leading-none">{res.date.getDate()}</div>
+                                                <div className="text-[9px] font-bold text-slate-400">{res.date.toLocaleDateString('es-ES', { month: 'short' })}</div>
+                                            </div>
+                                            <div className="flex-1">
+                                                <div className={`text-sm font-black ${res.type === 'LIBRE' ? 'text-red-600' : 'text-emerald-700'}`}>
+                                                    {res.type === 'LIBRE' ? 'LIBRA 🌙' : 'GUARDIA 👮‍♂️'}
+                                                </div>
+                                                {res.type === 'GUARDIA' && (
+                                                    <div className="text-xs font-bold text-slate-600 bg-white/50 inline-block px-1.5 rounded mt-0.5 border border-emerald-100">
+                                                        en {res.center}
+                                                    </div>
+                                                )}
+                                            </div>
+                                            {res.type === 'GUARDIA' && <div className="text-emerald-200"><Icon path={Icons.Map} className="w-8 h-8" /></div>}
+                                            {res.type === 'LIBRE' && <div className="text-red-200"><Icon path={Icons.Moon} className="w-8 h-8" /></div>}
+                                        </div>
+                                    ))}
+                                    {searchResults.length === 0 && <div className="text-center text-gray-400 py-4 italic">No se encontraron guardias (Nº1) ni libres próximos.</div>}
+                                </div>
+                            ) : (
+                                <div className="bg-white p-6 rounded-xl shadow-md text-center border-2 border-emerald-100">
+                                    <h4 className="text-sm font-bold text-gray-500 uppercase mb-4">{searchResults[0].date.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</h4>
+                                    {searchResults[0].status === 'DOMINGO' ? <div className="text-gray-400 flex flex-col items-center py-4"><Icon path={Icons.Coffee} className="w-16 h-16 mb-3 text-gray-300" /><span className="text-2xl font-black text-gray-400">ES DOMINGO</span></div> : (
+                                        <div className="flex justify-around items-center py-4">{searchResults[0].libras.map((l, idx) => (<div key={idx} className="flex flex-col items-center"><span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">{l.colla}</span><div className="bg-red-50 border border-red-100 rounded-lg p-3 flex flex-col items-center min-w-[120px]"><Icon path={Icons.Moon} className="w-8 h-8 text-red-400 mb-1" /><span className="text-lg font-black text-slate-800">{l.name}</span><span className="text-[10px] font-bold text-red-500">LIBRA</span></div></div>))}</div>
+                                    )}
+                                </div>
+                            )}
+                        </div>)}
+                    </div>)}
+
+                    {showSettings && tempConfig && ( <div className="fixed inset-0 z-[100] bg-white flex flex-col p-6 overflow-y-auto"> 
+                        <div className="flex justify-between items-center mb-6"><h2 className="text-xl font-bold">Configuración ({COLLA_NAMES[activeColla]})</h2><button onClick={() => setShowSettings(false)} className="bg-slate-200 p-2 rounded"><Icon path={Icons.X} className="w-5 h-5" /></button></div> 
+                        <div className="max-w-4xl mx-auto space-y-8">
+                            <div className="bg-blue-50 rounded-xl shadow-sm border border-blue-200 p-6">
+                                <h3 className="text-xl font-bold text-blue-800 mb-6 border-b border-blue-200 pb-2 flex items-center gap-2"><Icon path={Icons.Swap} className="w-6 h-6" /> TRASPASO ENTRE COLLAS</h3>
+                                <div className="space-y-4">
+                                    <div><label className="block text-xs font-bold text-gray-500 mb-1">Origen</label><select className="w-full border rounded p-2 text-sm font-bold" value={transferSource} onChange={e => setTransferSource(e.target.value)}><option value="1">RAYO</option><option value="2">MIGUEL SEXI</option></select></div>
+                                    <div><label className="block text-xs font-bold text-gray-500 mb-1">Persona a mover</label><select className="w-full border rounded p-2 text-sm" value={transferName} onChange={e => setTransferName(e.target.value)}><option value="">Selecciona...</option>{(collasData[transferSource].names || []).map(n => <option key={n} value={n}>{n}</option>)}</select></div>
+                                    <div><label className="block text-xs font-bold text-gray-500 mb-1">Destino</label><div className="w-full p-2 border rounded bg-gray-100 text-sm font-bold text-gray-600">Mover a: {COLLA_NAMES[transferSource === '1' ? '2' : '1']}</div></div>
+                                    <div><label className="block text-xs font-bold text-gray-500 mb-1">Posición destino (Número)</label><input type="number" min="1" className="w-full border rounded p-2 text-sm" value={transferPos} onChange={e => setTransferPos(e.target.value)} /></div>
+                                    <button onClick={handleTransfer} className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold shadow hover:bg-blue-700 flex justify-center items-center gap-2"><Icon path={Icons.Swap} className="w-4 h-4" /> REALIZAR TRASPASO</button>
+                                </div>
+                            </div>
+                            <div className="bg-red-50 rounded-xl shadow-sm border border-red-200 p-6">
+                                <h3 className="text-xl font-bold text-red-800 mb-6 border-b border-red-200 pb-2 flex items-center gap-2"><Icon path={Icons.Bandage} className="w-6 h-6" /> GESTIONAR AUSENCIAS</h3>
+                                <div className="space-y-4">
+                                    <div><label className="block text-xs font-bold text-gray-500 mb-1">Persona</label><select className="w-full border rounded p-2 text-sm" value={absenceForm.name} onChange={e => setAbsenceForm({...absenceForm, name: e.target.value})}><option value="">Selecciona...</option>{names.map(n => <option key={n} value={n}>{n}</option>)}{verdes.map(n => <option key={n.name} value={n.name}>{n.name} (Verde)</option>)}</select></div>
+                                    <div><label className="block text-xs font-bold text-gray-500 mb-1">Tipo</label><div className="flex gap-2"><button onClick={() => setAbsenceForm({...absenceForm, type: 'BAJA'})} className={`flex-1 py-2 rounded text-sm font-bold border ${absenceForm.type === 'BAJA' ? 'bg-red-500 text-white border-red-600' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>BAJA</button><button onClick={() => setAbsenceForm({...absenceForm, type: 'VACACIONES'})} className={`flex-1 py-2 rounded text-sm font-bold border ${absenceForm.type === 'VACACIONES' ? 'bg-green-500 text-white border-green-600' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>VACACIONES</button></div></div>
+                                    <div className="grid grid-cols-2 gap-4"><div><label className="block text-xs font-bold text-gray-500 mb-1">Desde</label><input type="date" className="w-full border rounded p-2 text-sm" value={absenceForm.start} onChange={e => setAbsenceForm({...absenceForm, start: e.target.value})} /></div></div>
+                                    <button onClick={handleSaveAbsence} className="w-full bg-slate-800 text-white py-3 rounded-lg font-bold shadow hover:bg-slate-700">AÑADIR AUSENCIA</button>
+                                </div>
+                                <div className="mt-4 pt-4 border-t border-red-100"><h4 className="text-xs font-bold text-red-400 uppercase tracking-widest mb-3">Ausencias Registradas</h4>{activeAbsencesList.length > 0 ? (<div className="space-y-2">{activeAbsencesList.map((item, idx) => { const isActive = !item.end; return (<div key={idx} className="flex justify-between items-center bg-white p-2 rounded border border-red-100 text-xs"><div className="flex flex-col"><div className="flex items-center gap-2"><span className="font-bold text-gray-800">{item.name}</span><span className={`px-1.5 rounded text-[9px] font-bold ${item.status === 'BAJA' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>{item.status}</span></div><span className="font-mono text-gray-500 text-[10px]">Desde {item.start} {item.end ? `hasta ${item.end}` : '(En curso)'}</span></div><div className="flex gap-2">{isActive && <button onClick={() => handleEndAbsence(item.id)} className="text-white bg-green-500 hover:bg-green-600 px-2 py-1 rounded text-[9px] font-bold">DAR ALTA</button>}<button onClick={() => handleDeleteAbsence(item.id)} className="text-red-400 hover:text-red-600 p-1"><Icon path={Icons.Trash} className="w-4 h-4" /></button></div></div>)})}</div>) : (<p className="text-xs text-gray-400 italic text-center">No hay ausencias registradas.</p>)}</div>
+                            </div>
+                            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6"><h3 className="text-xl font-bold text-slate-800 mb-6 border-b pb-2 flex items-center gap-2"><Icon path={Icons.Users} className="w-6 h-6" /> GESTIÓN DE PERSONAL ({COLLA_NAMES[activeColla]})</h3><form onSubmit={handleAddName} className="flex gap-3 mb-6"><input type="text" placeholder="Nuevo Nombre..." className="flex-1 border-2 border-slate-200 rounded-lg p-3 text-lg uppercase" value={newName} onChange={(e) => setNewName(e.target.value)} /><input type="number" placeholder="POS" min="1" max={names.length + 1} className="w-16 border-2 border-slate-200 rounded-lg p-2 text-center text-sm font-bold" value={newPosition} onChange={(e) => setNewPosition(e.target.value)} /><button type="submit" className="bg-blue-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-blue-700 flex items-center gap-2 shadow-sm"><Icon path={Icons.Plus} className="w-5 h-5" /> AÑADIR</button></form><div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">{names.map((name, idx) => (<div key={idx} className="flex items-center justify-between bg-slate-50 p-2 rounded border border-slate-200 group"><div className="flex items-center gap-2 overflow-hidden"><span className="bg-slate-200 text-slate-600 text-xs font-mono w-6 h-6 flex items-center justify-center rounded-full shrink-0">{idx + 1}</span><span className="font-bold text-slate-700 truncate text-sm">{name}</span></div><button onClick={() => handleRemoveName(idx)} className="text-slate-300 hover:text-red-500 hover:bg-red-50 p-1 rounded transition"><Icon path={Icons.Trash} className="w-4 h-4" /></button></div>))}</div></div>
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                                <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+                                    <h3 className="text-xl font-bold text-blue-800 mb-6 border-b pb-2 flex items-center gap-2"><Icon path={Icons.Map} className="w-6 h-6" /> VARIABLES CEHORPA</h3>
+                                    <div className="grid grid-cols-1 gap-6">
+                                        <div className="bg-blue-50/50 p-3 rounded-lg border border-blue-100">
+                                            <label className="block text-sm font-bold text-gray-600 uppercase mb-2">Grupo Guardia</label>
+                                            <div className="flex items-center gap-2">
+                                                <input type="number" className="w-20 text-center text-lg p-2 border rounded font-bold" value={tempConfig.cehorpa.guardias} onChange={(e) => setTempConfig({...tempConfig, cehorpa: {...tempConfig.cehorpa, guardias: +e.target.value}})} />
+                                                <span className="text-gray-400">pers. a las</span>
+                                                <input type="time" className="flex-1 text-center text-lg p-2 border rounded" value={tempConfig.cehorpa.horaGuardia} onChange={(e) => setTempConfig({...tempConfig, cehorpa: {...tempConfig.cehorpa, horaGuardia: e.target.value}})} />
+                                            </div>
+                                        </div>
+                                        <div className="bg-orange-50/50 p-3 rounded-lg border border-orange-100">
+                                            <label className="block text-sm font-bold text-gray-600 uppercase mb-2">Grupo Madruga</label>
+                                            <div className="flex items-center gap-2">
+                                                <input type="number" className="w-20 text-center text-lg p-2 border rounded font-bold" value={tempConfig.cehorpa.madrugan} onChange={(e) => setTempConfig({...tempConfig, cehorpa: {...tempConfig.cehorpa, madrugan: +e.target.value}})} />
+                                                <span className="text-gray-400">pers. a las</span>
+                                                <input type="time" className="flex-1 text-center text-lg p-2 border rounded" value={tempConfig.cehorpa.horaMadruga} onChange={(e) => setTempConfig({...tempConfig, cehorpa: {...tempConfig.cehorpa, horaMadruga: e.target.value}})} />
+                                            </div>
+                                        </div>
+                                        <div className="bg-gray-50/50 p-3 rounded-lg border border-gray-200">
+                                            <label className="block text-sm font-bold text-gray-600 uppercase mb-2">Grupo Resto</label>
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-gray-400 text-sm">El resto entra a las</span>
+                                                <input type="time" className="flex-1 text-center text-lg p-2 border rounded" value={tempConfig.cehorpa.horaResto} onChange={(e) => setTempConfig({...tempConfig, cehorpa: {...tempConfig.cehorpa, horaResto: e.target.value}})} />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+                                    <h3 className="text-xl font-bold text-emerald-800 mb-6 border-b pb-2 flex items-center gap-2"><Icon path={Icons.Map} className="w-6 h-6" /> VARIABLES CORTIJOS</h3>
+                                    <div className="mb-6 bg-emerald-50 p-3 rounded-lg flex items-center justify-between border border-emerald-100">
+                                        <span className="font-bold text-emerald-900 text-sm">CAPACIDAD CORTIJOS:</span>
+                                        <input type="number" className="w-20 text-xl font-bold text-center p-1 border-2 border-emerald-500 rounded text-emerald-900" value={tempConfig.cortijos.capacidad} onChange={(e) => setTempConfig({...tempConfig, cortijos: {...tempConfig.cortijos, capacidad: +e.target.value}})} />
+                                    </div>
+                                    <div className="space-y-4">
+                                        <div className="bg-gray-50 p-2 rounded border flex items-center gap-2">
+                                            <span className="w-24 font-bold text-gray-600 text-sm">Guardia:</span>
+                                            <input type="number" className="w-16 p-1 border rounded text-center" value={tempConfig.cortijos.guardias} onChange={(e) => setTempConfig({...tempConfig, cortijos: {...tempConfig.cortijos, guardias: +e.target.value}})} />
+                                            <input type="time" className="flex-1 p-1 border rounded text-center" value={tempConfig.cortijos.horaGuardia} onChange={(e) => setTempConfig({...tempConfig, cortijos: {...tempConfig.cortijos, horaGuardia: e.target.value}})} />
+                                        </div>
+                                        <div className="bg-gray-50 p-2 rounded border flex items-center gap-2">
+                                            <span className="w-24 font-bold text-gray-600 text-sm">Intermedios:</span>
+                                            <input type="number" className="w-16 p-1 border rounded text-center" value={tempConfig.cortijos.intermedios} onChange={(e) => setTempConfig({...tempConfig, cortijos: {...tempConfig.cortijos, intermedios: +e.target.value}})} />
+                                            <input type="time" className="flex-1 p-1 border rounded text-center" value={tempConfig.cortijos.horaIntermedia} onChange={(e) => setTempConfig({...tempConfig, cortijos: {...tempConfig.cortijos, horaIntermedia: e.target.value}})} />
+                                        </div>
+                                        <div className="bg-gray-50 p-2 rounded border flex items-center gap-2">
+                                            <span className="w-24 font-bold text-gray-600 text-sm">Madrugan:</span>
+                                            <input type="number" className="w-16 p-1 border rounded text-center" value={tempConfig.cortijos.madrugan} onChange={(e) => setTempConfig({...tempConfig, cortijos: {...tempConfig.cortijos, madrugan: +e.target.value}})} />
+                                            <input type="time" className="flex-1 p-1 border rounded text-center" value={tempConfig.cortijos.horaMadruga} onChange={(e) => setTempConfig({...tempConfig, cortijos: {...tempConfig.cortijos, horaMadruga: e.target.value}})} />
+                                        </div>
+                                        <div className="bg-blue-50 p-2 rounded border flex items-center gap-2">
+                                            <span className="w-24 font-bold text-blue-600 text-sm">Apoyo (Ceh):</span>
+                                            <span className="text-gray-400 text-xs">Resto a las</span>
+                                            <input type="time" className="flex-1 p-1 border rounded text-center" value={tempConfig.cortijos.horaRestoCehorpa} onChange={(e) => setTempConfig({...tempConfig, cortijos: {...tempConfig.cortijos, horaRestoCehorpa: e.target.value}})} />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="bg-gradient-to-r from-slate-100 to-white rounded-xl shadow-sm border border-slate-300 p-6"><h3 className="text-xl font-bold text-slate-900 mb-4 border-b pb-2 flex items-center gap-2"><Icon path={Icons.Rotate} className="w-6 h-6 text-blue-600" /> PUNTO DE PARTIDA ({COLLA_NAMES[activeColla]})</h3><div className="grid grid-cols-1 md:grid-cols-3 gap-6"><div><label className="block text-sm font-bold text-gray-700 mb-1">Fecha de Inicio</label><input type="date" className="w-full p-3 border rounded-lg text-lg font-mono" value={tempRefData.dateString} onChange={(e) => setTempRefData({...tempRefData, dateString: e.target.value})} /></div><div><label className="block text-sm font-bold text-gray-700 mb-1">Primer Guardia (Nº 1)</label><select className="w-full p-3 border rounded-lg text-lg font-bold text-slate-700" value={tempRefData.firstGuardName} onChange={(e) => setTempRefData({...tempRefData, firstGuardName: e.target.value})}>{names.map(name => <option key={name} value={name}>{name}</option>)}</select></div><div><label className="block text-sm font-bold text-gray-700 mb-1">Centro ese día</label><div className="flex gap-0 rounded-lg overflow-hidden border border-gray-300 h-[50px]"><button onClick={() => setTempRefData({...tempRefData, center: 'CORTIJOS'})} className={`flex-1 font-bold transition ${tempRefData.center === 'CORTIJOS' ? 'bg-emerald-600 text-white' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}>CORTIJOS</button><button onClick={() => setTempRefData({...tempRefData, center: 'CEHORPA'})} className={`flex-1 font-bold transition ${tempRefData.center === 'CEHORPA' ? 'bg-blue-600 text-white' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}>CEHORPA</button></div></div></div></div>
+                            <div className="bg-green-50 rounded-xl shadow-sm border border-green-200 p-6">
+                                <h3 className="text-xl font-bold text-green-800 mb-6 border-b border-green-200 pb-2 flex items-center gap-2"><Icon path={Icons.Leaf} className="w-6 h-6" /> LOS VERDES (Personal Especial)</h3>
+                                <div className="bg-white p-4 rounded-lg border border-green-100 mb-4">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                        <div><label className="text-xs font-bold text-gray-500">Nombre</label><input type="text" className="w-full p-2 border rounded uppercase font-bold" value={newVerde.name} onChange={e => setNewVerde({...newVerde, name: e.target.value})} /></div>
+                                        <div><label className="text-xs font-bold text-gray-500">Fecha Inicio (Punto de Partida)</label><input type="date" className="w-full p-2 border rounded" value={newVerde.startDate} onChange={e => setNewVerde({...newVerde, startDate: e.target.value})} /></div>
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                        <div><label className="text-xs font-bold text-gray-500">Patrón Inicial (Esa semana hace...)</label><select className="w-full p-2 border rounded" value={newVerde.startCycleIndex} onChange={e => setNewVerde({...newVerde, startCycleIndex: parseInt(e.target.value)})}><option value="0">Guardia L-J (Madruga X-S)</option><option value="1">Guardia M-V (Madruga L-J)</option><option value="2">Guardia X-S (Madruga M-V)</option></select></div>
+                                        <div><label className="text-xs font-bold text-gray-500">Centro Inicial</label><select className="w-full p-2 border rounded" value={newVerde.startCenter} onChange={e => setNewVerde({...newVerde, startCenter: e.target.value})}><option value="CORTIJOS">Empieza en CORTIJOS</option><option value="CEHORPA">Empieza en CEHORPA</option></select></div>
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
+                                        <div>
+                                            <label className="text-xs font-bold text-gray-500">Modo Rotación</label>
+                                            <select className="w-full p-2 border rounded" value={newVerde.rotationMode} onChange={e => setNewVerde({...newVerde, rotationMode: e.target.value})}>
+                                                <option value="SEMANAL">🔄 Rotación Semanal</option>
+                                                <option value="DIARIO">⚡ Rotación Diaria</option>
+                                                <option value="FIJO">📍 Fijo en Centro</option>
+                                                <option value="SEGUN_GRUPO">👥 Sigue al Grupo</option>
+                                            </select>
+                                        </div>
+                                        <div><label className="text-xs font-bold text-gray-500">Hasta (Opcional)</label><input type="date" className="w-full p-2 border rounded" value={newVerde.endDate} onChange={e => setNewVerde({...newVerde, endDate: e.target.value})} /></div>
+                                    </div>
+                                    <button onClick={addVerde} className="mt-4 w-full bg-green-600 text-white font-bold py-2 rounded hover:bg-green-700 shadow-sm">AÑADIR VERDE</button>
+                                </div>
+                                <div className="space-y-2">
+                                    {verdes.map(v => (
+                                        <div key={v.id} className="flex justify-between items-center bg-white p-3 rounded border shadow-sm">
+                                            <div>
+                                                <span className="font-black text-green-900">{v.name}</span>
+                                                <div className="text-[10px] text-gray-500 font-mono mt-0.5">
+                                                    Inicio: {v.startDate} | {v.rotationMode === 'FIJO' ? 'Fijo' : v.rotationMode === 'DIARIO' ? 'Rota Diario' : v.rotationMode === 'SEGUN_GRUPO' ? 'Con Grupo' : 'Rota Semanal'} 
+                                                    {v.endDate && ` | Fin: ${v.endDate}`}
+                                                </div>
+                                            </div>
+                                            <button onClick={() => removeVerde(v.id)} className="text-red-500 hover:bg-red-50 p-1 rounded"><Icon path={Icons.Trash} className="w-4 h-4" /></button>
+                                        </div>
+                                    ))}
+                                    {verdes.length === 0 && <p className="text-center text-gray-400 italic text-xs">No hay personal verde configurado.</p>}
+                                </div>
+                            </div>
+                            <button onClick={saveSettingsToCloud} className="w-full bg-green-600 text-white py-4 rounded-xl font-bold">GUARDAR CONFIGURACIÓN EN LA NUBE</button>
+                        </div> 
+                    </div> )}
+
+                    <main className="max-w-lg mx-auto p-1.5 flex-1 flex flex-col w-full">
+                        {viewMode === 'daily' 
+                            ? <DailyView simulation={simulation} />
+                            : <WeeklyView weekData={weekData} names={names} verdes={verdes} />
+                        }
+                    </main>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
