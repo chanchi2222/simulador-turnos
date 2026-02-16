@@ -78,6 +78,10 @@
             Leaf: <><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/></>
         };
 
+        // ==========================================
+        // 3. MOTOR DE LÓGICA (Funciones Puras)
+        // ==========================================
+        
         const getMonday = (d) => { 
             const dObj = new Date(d); 
             const day = dObj.getDay(); 
@@ -87,6 +91,7 @@
             return mon; 
         };
 
+        // LÓGICA CLAVE: ASIGNAR ETIQUETAS SOLO A NORMALES (Desde el principio)
         const assignLabelsToNormals = (peopleList, labelsQueue) => {
             let labelIndex = 0;
             return peopleList.map(p => {
@@ -286,40 +291,29 @@
             // 1. REPARTO BASE CORTIJOS
             let gNormals = cortijosList.slice(0, config.cortijos.guardias);
             let remaining = cortijosList.slice(config.cortijos.guardias);
-            
-            // Madrugas se cogen del FINAL de la lista restante para respetar antigüedad/rotación
-            const madrugaCount = config.cortijos.madrugan;
             let mNormals = [];
             let iNormals = [];
 
             if (currentCenter === 'CORTIJOS') {
+                const madrugaCount = config.cortijos.madrugan;
                 if (remaining.length >= madrugaCount) {
-                    // Los últimos N son los madrugadores
                     mNormals = remaining.slice(remaining.length - madrugaCount);
-                    // Los del medio son los intermedios
                     iNormals = remaining.slice(0, remaining.length - madrugaCount);
                 } else {
                     mNormals = remaining;
                     iNormals = [];
                 }
             } else {
-                // Si no están en Cortijos, iNormals es todo el resto, o vacio si se usa otra logica
-                // pero este bloque es para la logica interna de Cortijos
                 iNormals = remaining;
             }
-
-            // Reiniciamos cortijosList para reconstruirlo
             cortijosList = [];
 
             // 2. INYECCIÓN VERDES
             // GUARDIAS
             activeVerdesGuardia.forEach(v => {
                 if (currentCenter === 'CEHORPA') {
-                    // Logic Cehorpa unchanged for Guardia
                 } else {
-                    // Insertar en posición 2
                     gNormals.splice(2, 0, { name: v.name, isVerde: true, roleOverride: 'GUARDIA' });
-                    // Si sobra gente en Guardia, el último normal pasa al PRINCIPIO de Intermedios
                     while (gNormals.length > config.cortijos.guardias) {
                         let displacedIndex = -1;
                         for(let k = gNormals.length - 1; k >= 0; k--) {
@@ -342,29 +336,17 @@
             // MADRUGAS
             activeVerdesMadruga.forEach(v => {
                 if (currentCenter === 'CEHORPA') {
-                    // Logic Cehorpa unchanged
                 } else {
-                    // En Cortijos: El Verde entra el PRIMERO de los Madrugas
                     mNormals.unshift({ name: v.name, isVerde: true, roleOverride: 'MADRUGA' });
-                    
-                    // Si sobran madrugadores, el PRIMER normal (que es el "más alto" de la lista de madrugas) se va a Intermedios (al final)
                     while (mNormals.length > config.cortijos.madrugan) {
-                        let displacedIndex = -1;
-                        // Buscar el primer normal
+                        let displaced = null;
                         for (let k = 0; k < mNormals.length; k++) {
                              if (!mNormals[k].isVerde) {
-                                 displacedIndex = k;
+                                 displaced = mNormals.splice(k, 1)[0];
                                  break;
                              }
                         }
-                        if (displacedIndex !== -1) {
-                            const displaced = mNormals.splice(displacedIndex, 1)[0];
-                            iNormals.push(displaced);
-                        } else {
-                            // Si solo hay verdes y sobran, quitamos el ultimo
-                             const displaced = mNormals.pop();
-                             iNormals.push(displaced);
-                        }
+                        if (displaced) iNormals.push(displaced); 
                     }
                 }
             });
@@ -376,7 +358,6 @@
                 }
             });
 
-            // HELPERS PARA CEHORPA
             const injectVerdeLegacy = (targetList, verdeName, index, role) => {
                 const item = { name: verdeName, isVerde: true, roleOverride: role };
                 if (index > targetList.length) targetList.push(item);
@@ -436,7 +417,7 @@
                 
                 const c_g2 = iNormals.map((p, i) => processPerson(p, 'INTERMEDIO', config.cortijos.horaIntermedia, 'CORTIJOS', i + 1));
                 
-                // CORTIJOS: Asignar etiqueta PUNTO al ÚLTIMO normal de Madrugas
+                // CORTIJOS: Asignar etiqueta PUNTO al ÚLTIMO normal
                 let lastNormalIndex = -1;
                 for (let k = mNormals.length - 1; k >= 0; k--) {
                      if (!mNormals[k].isVerde) {
@@ -464,7 +445,28 @@
             return { isSunday: false, date: targetDate, center: currentCenter, libra: libraName, libraStatus: 'LIBRE', groups, personStatus };
         };
 
-        // --- COMPONENTES UI (DEFINIDOS ANTES DE APP) ---
+        const ConfirmationModal = ({ show, title, message, onConfirm, onCancel, isAlert }) => {
+            if (!show) return null;
+            return (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4 animate-in fade-in duration-200">
+                    <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6 relative">
+                        <h3 className="text-lg font-bold text-gray-900 mb-2">{title}</h3>
+                        <p className="text-gray-600 mb-6 text-sm">{message}</p>
+                        <div className="flex justify-end gap-2">
+                            {!isAlert && (
+                                <button onClick={onCancel} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg font-bold text-xs hover:bg-gray-200 transition">
+                                    CANCELAR
+                                </button>
+                            )}
+                            <button onClick={onConfirm} className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-bold text-xs hover:bg-emerald-700 transition shadow-sm">
+                                {isAlert ? 'ENTENDIDO' : 'CONFIRMAR'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
         const Header = ({ activeColla, setActiveColla, connectionStatus, onSettingsClick, onConnectClick }) => (
             <header className="bg-slate-800 text-white py-3 px-4 shadow-md sticky top-0 z-30 flex justify-between items-center shrink-0">
                 <div className="flex items-center gap-2">
@@ -657,36 +659,7 @@
             );
         };
 
-        const ConfirmationModal = ({ show, title, message, onConfirm, onCancel, isAlert }) => {
-            if (!show) return null;
-            return (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4 animate-in fade-in duration-200">
-                    <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6 relative">
-                        <h3 className="text-lg font-bold text-gray-900 mb-2">{title}</h3>
-                        <p className="text-gray-600 mb-6 text-sm">{message}</p>
-                        <div className="flex justify-end gap-2">
-                            {!isAlert && (
-                                <button onClick={onCancel} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg font-bold text-xs hover:bg-gray-200 transition">
-                                    CANCELAR
-                                </button>
-                            )}
-                            <button onClick={onConfirm} className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-bold text-xs hover:bg-emerald-700 transition shadow-sm">
-                                {isAlert ? 'ENTENDIDO' : 'CONFIRMAR'}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            );
-        };
-
-        // ==========================================
-        // 5. APP PRINCIPAL (DEFINIDA DESPUÉS)
-        // ==========================================
-
         const App = () => {
-            // ... (Resto del componente App igual que antes) ...
-            // [CÓDIGO APP COMPLETO AQUÍ ABAJO, YA SIN REFERENCIAS CIRCULARES]
-            
             const [selectedDate, setSelectedDate] = useState(new Date());
             const [activeColla, setActiveColla] = useState('1'); 
             const [globalConfig, setGlobalConfig] = useState(DEFAULT_CONFIG);
@@ -1286,6 +1259,7 @@
                                     </div>
                                 </div>
                             </div>
+                            <div className="bg-gradient-to-r from-slate-100 to-white rounded-xl shadow-sm border border-slate-300 p-6"><h3 className="text-xl font-bold text-slate-900 mb-4 border-b pb-2 flex items-center gap-2"><Icon path={Icons.Rotate} className="w-6 h-6 text-blue-600" /> PUNTO DE PARTIDA ({COLLA_NAMES[activeColla]})</h3><div className="grid grid-cols-1 md:grid-cols-3 gap-6"><div><label className="block text-sm font-bold text-gray-700 mb-1">Fecha de Inicio</label><input type="date" className="w-full p-3 border rounded-lg text-lg font-mono" value={tempRefData.dateString} onChange={(e) => setTempRefData({...tempRefData, dateString: e.target.value})} /></div><div><label className="block text-sm font-bold text-gray-700 mb-1">Primer Guardia (Nº 1)</label><select className="w-full p-3 border rounded-lg text-lg font-bold text-slate-700" value={tempRefData.firstGuardName} onChange={(e) => setTempRefData({...tempRefData, firstGuardName: e.target.value})}>{names.map(name => <option key={name} value={name}>{name}</option>)}</select></div><div><label className="block text-sm font-bold text-gray-700 mb-1">Centro ese día</label><div className="flex gap-0 rounded-lg overflow-hidden border border-gray-300 h-[50px]"><button onClick={() => setTempRefData({...tempRefData, center: 'CORTIJOS'})} className={`flex-1 font-bold transition ${tempRefData.center === 'CORTIJOS' ? 'bg-emerald-600 text-white' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}>CORTIJOS</button><button onClick={() => setTempRefData({...tempRefData, center: 'CEHORPA'})} className={`flex-1 font-bold transition ${tempRefData.center === 'CEHORPA' ? 'bg-blue-600 text-white' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}>CEHORPA</button></div></div></div></div>
                             <div className="bg-green-50 rounded-xl shadow-sm border border-green-200 p-6">
                                 <h3 className="text-xl font-bold text-green-800 mb-6 border-b border-green-200 pb-2 flex items-center gap-2"><Icon path={Icons.Leaf} className="w-6 h-6" /> LOS VERDES (Personal Especial)</h3>
                                 <div className="bg-white p-4 rounded-lg border border-green-100 mb-4">
