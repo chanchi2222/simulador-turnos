@@ -36,7 +36,7 @@
 
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
-        const { formatLocalDate, parseLocalDate, getMonday, differenceInCalendarDays, calculateRotationHeadIndex, validateConfig, normalizeConfig } = window.SimulatorCore;
+        const { formatLocalDate, parseLocalDate, getMonday, differenceInCalendarDays, getInclusivePeriodEndDate, getVerdeSchedule, calculateRotationHeadIndex, validateConfig, normalizeConfig } = window.SimulatorCore;
 
         // ==========================================
         // 1. CONSTANTES, ICONOS Y HELPERS
@@ -54,8 +54,6 @@
             cehorpa: { guardias: 6, madrugan: 4, horaGuardia: "10:00", horaMadruga: "07:00", horaResto: "09:00" },
             cortijos: { capacidad: 8, guardias: 4, intermedios: 2, madrugan: 2, horaGuardia: "10:00", horaIntermedia: "08:00", horaMadruga: "07:00", horaRestoCehorpa: "09:00" }
         };
-
-        const VERDE_ROTATION = [{ guardia: [1, 4], madruga: [3, 6] }, { guardia: [2, 5], madruga: [1, 4] }, { guardia: [3, 6], madruga: [2, 5] }];
 
         const Icon = ({ path, className }) => (
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>{path}</svg>
@@ -179,43 +177,13 @@
             const remainingVerdesList = [];
 
             cVerdes.forEach(v => {
-                const vStartDate = v.startDate ? parseLocalDate(v.startDate) : new Date(refDateObj);
-                if (!vStartDate) return;
-                if (targetTime < vStartDate.getTime()) return;
-
-                if (v.endDate) {
-                    const vEndDate = parseLocalDate(v.endDate);
-                    if (!vEndDate) return;
-                    if (targetTime > vEndDate.getTime()) return;
-                }
-
-                const vStartMonday = getMonday(vStartDate);
-                const verdeWeeksPassed = Math.round(differenceInCalendarDays(vStartMonday, targetMonday) / 7);
-
-                const baseCycle = v.startCycleIndex !== undefined ? parseInt(v.startCycleIndex) : (v.offset ? parseInt(v.offset) : 0);
-                const currentCycleIndex = ((baseCycle + verdeWeeksPassed) % 3 + 3) % 3;
-                const pattern = VERDE_ROTATION[currentCycleIndex];
-
-                const startCenter = v.startCenter || (v.centerMode === 'CORTIJOS' ? 'CORTIJOS' : 'CEHORPA');
-                const otherCenter = startCenter === 'CORTIJOS' ? 'CEHORPA' : 'CORTIJOS';
-                let effectiveCenter = 'CEHORPA';
-
-                const rotationMode = v.rotationMode || (v.rotatesCenter ? 'SEMANAL' : 'FIJO');
-
-                if (rotationMode === 'SEMANAL') {
-                    const isEvenWeek = verdeWeeksPassed % 2 === 0;
-                    effectiveCenter = isEvenWeek ? startCenter : otherCenter;
-                } else if (rotationMode === 'DIARIO') {
-                    const diffDays = differenceInCalendarDays(vStartDate, targetTime);
-                    const isEvenDay = diffDays % 2 === 0;
-                    effectiveCenter = isEvenDay ? startCenter : otherCenter;
-                } else if (rotationMode === 'FIJO') {
-                    effectiveCenter = startCenter;
-                } else if (rotationMode === 'SEGUN_GRUPO') {
-                    effectiveCenter = currentCenter;
-                } else {
-                    effectiveCenter = startCenter;
-                }
+                const schedule = getVerdeSchedule(
+                    { ...v, startDate: v.startDate || formatLocalDate(refDateObj) },
+                    targetTime,
+                    currentCenter
+                );
+                if (!schedule) return;
+                const { effectiveCenter } = schedule;
 
                 const abs = isAbsent(v.name, dateStr);
                 if (abs) { 
@@ -224,15 +192,12 @@
                 }
 
                 const centerOk = (effectiveCenter === currentCenter);
-                let assigned = false;
-
-                if (pattern.guardia.includes(dayOfWeek) && centerOk) {
+                const assigned = schedule.assigned;
+                if (schedule.role === 'GUARDIA' && centerOk) {
                     activeVerdesGuardia.push({ ...v, effectiveCenter });
-                    assigned = true;
-                } else if (pattern.madruga.includes(dayOfWeek) && centerOk) {
+                } else if (schedule.role === 'MADRUGA' && centerOk) {
                     if (!activeVerdesGuardia.find(g => g.name === v.name)) {
                         activeVerdesMadruga.push({ ...v, effectiveCenter });
-                        assigned = true;
                     }
                 }
 
@@ -680,7 +645,8 @@
                 startCycleIndex: 0,
                 startCenter: "CORTIJOS",
                 rotationMode: "SEMANAL", 
-                endDate: "" 
+                endDate: "",
+                periodMode: "WEEK"
             });
 
             const [transferName, setTransferName] = useState("");
@@ -897,13 +863,27 @@
                 });
             };
             
-            const addVerde = (e) => {
+            const addVerde = async (e) => {
                 e.preventDefault();
                 const name = newVerde.name.trim().toLocaleUpperCase('es-ES');
                 const startDate = parseLocalDate(newVerde.startDate);
-                const endDate = newVerde.endDate ? parseLocalDate(newVerde.endDate) : null;
                 if (!name || !startDate) return showMessage('Datos no válidos', 'Escribe el nombre y una fecha de inicio válida para el personal especial.');
-                if (newVerde.endDate && !endDate) return showMessage('Fecha no válida', 'La fecha final del personal especial no es válida.');
+                if (!['WEEK', 'CUSTOM', 'ONGOING'].includes(newVerde.periodMode)) {
+                    return showMessage('Duración no válida', 'Selecciona una duración válida para el periodo del personal especial.');
+                }
+                let endDateValue = '';
+                if (newVerde.periodMode === 'WEEK') {
+                    endDateValue = getInclusivePeriodEndDate(newVerde.startDate, 7);
+                    if (!endDateValue) return showMessage('Periodo no válido', 'No se pudo calcular el final de la semana seleccionada.');
+                } else if (newVerde.periodMode === 'CUSTOM') {
+                    const endDate = parseLocalDate(newVerde.endDate);
+                    if (!endDate) return showMessage('Fecha no válida', 'Selecciona una fecha final válida para el periodo.');
+                    endDateValue = formatLocalDate(endDate);
+                }
+                const endDate = endDateValue ? parseLocalDate(endDateValue) : null;
+                if (endDateValue && !endDate) {
+                    return showMessage('Fecha no válida', 'No se pudo validar el final del periodo seleccionado.');
+                }
                 if (endDate && endDate < startDate) return showMessage('Rango no válido', 'La fecha final no puede ser anterior a la fecha de inicio.');
                 if (![0, 1, 2].includes(Number(newVerde.startCycleIndex))) return showMessage('Patrón no válido', 'Selecciona un patrón de rotación inicial válido.');
                 if (!['CORTIJOS', 'CEHORPA'].includes(newVerde.startCenter) || !['SEMANAL', 'DIARIO', 'FIJO', 'SEGUN_GRUPO'].includes(newVerde.rotationMode)) {
@@ -913,15 +893,25 @@
                 if (existingNames.some(personName => personName.toLocaleUpperCase('es-ES') === name)) {
                     return showMessage('Nombre duplicado', 'Esa persona ya está registrada en esta colla.');
                 }
-                const updatedVerdes = [...verdes, { ...newVerde, name, id: Date.now() }];
-                updateActiveCollaData({ verdes: updatedVerdes });
+                const updatedVerdes = [...verdes, {
+                    name,
+                    startDate: newVerde.startDate,
+                    endDate: endDateValue,
+                    startCycleIndex: Number(newVerde.startCycleIndex),
+                    startCenter: newVerde.startCenter,
+                    rotationMode: newVerde.rotationMode,
+                    id: Date.now()
+                }];
+                const saved = await updateActiveCollaData({ verdes: updatedVerdes });
+                if (!saved) return;
                 setNewVerde({
                     name: "",
                     startDate: formatLocalDate(new Date()),
                     startCycleIndex: 0,
                     startCenter: "CORTIJOS",
                     rotationMode: "SEMANAL",
-                    endDate: ""
+                    endDate: "",
+                    periodMode: "WEEK"
                 });
             };
             
@@ -1418,25 +1408,35 @@
                                 <div className="bg-white p-4 rounded-lg border border-green-100 mb-4">
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                                         <div><label className="text-xs font-bold text-gray-500">Nombre</label><input type="text" className="w-full p-2 border rounded uppercase font-bold" value={newVerde.name} onChange={e => setNewVerde({...newVerde, name: e.target.value})} /></div>
-                                        <div><label className="text-xs font-bold text-gray-500">Fecha Inicio (Punto de Partida)</label><input type="date" className="w-full p-2 border rounded" value={newVerde.startDate} onChange={e => setNewVerde({...newVerde, startDate: e.target.value})} /></div>
+                                        <div><label className="text-xs font-bold text-gray-500">Fecha de inicio del periodo</label><input type="date" className="w-full p-2 border rounded" value={newVerde.startDate} onChange={e => setNewVerde({...newVerde, startDate: e.target.value})} /></div>
                                     </div>
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                                         <div><label className="text-xs font-bold text-gray-500">Patrón Inicial (Esa semana hace...)</label><select className="w-full p-2 border rounded" value={newVerde.startCycleIndex} onChange={e => setNewVerde({...newVerde, startCycleIndex: parseInt(e.target.value)})}><option value="0">Guardia L-J (Madruga X-S)</option><option value="1">Guardia M-V (Madruga L-J)</option><option value="2">Guardia X-S (Madruga M-V)</option></select></div>
-                                        <div><label className="text-xs font-bold text-gray-500">Centro Inicial</label><select className="w-full p-2 border rounded" value={newVerde.startCenter} onChange={e => setNewVerde({...newVerde, startCenter: e.target.value})}><option value="CORTIJOS">Empieza en CORTIJOS</option><option value="CEHORPA">Empieza en CEHORPA</option></select></div>
+                                        <div><label className="text-xs font-bold text-gray-500">Centro inicial</label><select className="w-full p-2 border rounded" value={newVerde.startCenter} onChange={e => setNewVerde({...newVerde, startCenter: e.target.value})}><option value="CORTIJOS">Empieza en CORTIJOS</option><option value="CEHORPA">Empieza en CEHORPA</option></select></div>
                                     </div>
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
                                         <div>
-                                            <label className="text-xs font-bold text-gray-500">Modo Rotación</label>
+                                            <label className="text-xs font-bold text-gray-500">Cambio de centro</label>
                                             <select className="w-full p-2 border rounded" value={newVerde.rotationMode} onChange={e => setNewVerde({...newVerde, rotationMode: e.target.value})}>
-                                                <option value="SEMANAL">🔄 Rotación Semanal</option>
-                                                <option value="DIARIO">⚡ Rotación Diaria</option>
-                                                <option value="FIJO">📍 Fijo en Centro</option>
-                                                <option value="SEGUN_GRUPO">👥 Sigue al Grupo</option>
+                                                <option value="SEMANAL">Cada semana</option>
+                                                <option value="DIARIO">Cada día</option>
+                                                <option value="FIJO">No cambia de centro</option>
+                                                <option value="SEGUN_GRUPO">Sigue al centro del grupo</option>
                                             </select>
                                         </div>
-                                        <div><label className="text-xs font-bold text-gray-500">Hasta (Opcional)</label><input type="date" className="w-full p-2 border rounded" value={newVerde.endDate} onChange={e => setNewVerde({...newVerde, endDate: e.target.value})} /></div>
+                                        <div>
+                                            <label className="text-xs font-bold text-gray-500">Duración</label>
+                                            <div className="grid grid-cols-3 gap-1">
+                                                <button type="button" onClick={() => setNewVerde({...newVerde, periodMode: 'WEEK'})} className={`rounded border px-2 py-2 text-xs font-bold ${newVerde.periodMode === 'WEEK' ? 'border-green-600 bg-green-600 text-white' : 'bg-white text-gray-600'}`}>7 días</button>
+                                                <button type="button" onClick={() => setNewVerde({...newVerde, periodMode: 'CUSTOM'})} className={`rounded border px-2 py-2 text-xs font-bold ${newVerde.periodMode === 'CUSTOM' ? 'border-green-600 bg-green-600 text-white' : 'bg-white text-gray-600'}`}>Fechas</button>
+                                                <button type="button" onClick={() => setNewVerde({...newVerde, periodMode: 'ONGOING'})} className={`rounded border px-2 py-2 text-xs font-bold ${newVerde.periodMode === 'ONGOING' ? 'border-green-600 bg-green-600 text-white' : 'bg-white text-gray-600'}`}>Sin fin</button>
+                                            </div>
+                                        </div>
                                     </div>
-                                    <button onClick={addVerde} className="mt-4 w-full bg-green-600 text-white font-bold py-2 rounded hover:bg-green-700 shadow-sm">AÑADIR VERDE</button>
+                                    {newVerde.periodMode === 'CUSTOM' && <div><label className="text-xs font-bold text-gray-500">Fecha de fin (incluida)</label><input type="date" min={newVerde.startDate} className="w-full p-2 border rounded" value={newVerde.endDate} onChange={e => setNewVerde({...newVerde, endDate: e.target.value})} /></div>}
+                                    {newVerde.periodMode === 'WEEK' && <p className="text-xs text-green-800">Estará activo desde el inicio durante 7 días, ambos extremos incluidos.</p>}
+                                    {newVerde.periodMode === 'ONGOING' && <p className="text-xs text-green-800">Estará activo desde la fecha de inicio hasta que lo elimines.</p>}
+                                    <button onClick={addVerde} className="mt-4 w-full bg-green-600 text-white font-bold py-2 rounded hover:bg-green-700 shadow-sm">AÑADIR VERDE AL PERIODO</button>
                                 </div>
                                 <div className="space-y-2">
                                     {verdes.map(v => (
@@ -1444,8 +1444,7 @@
                                             <div>
                                                 <span className="font-black text-green-900">{v.name}</span>
                                                 <div className="text-[10px] text-gray-500 font-mono mt-0.5">
-                                                    Inicio: {v.startDate} | {v.rotationMode === 'FIJO' ? 'Fijo' : v.rotationMode === 'DIARIO' ? 'Rota Diario' : v.rotationMode === 'SEGUN_GRUPO' ? 'Con Grupo' : 'Rota Semanal'} 
-                                                    {v.endDate && ` | Fin: ${v.endDate}`}
+                                                    {v.startDate} – {v.endDate || 'sin fecha de fin'} | {v.rotationMode === 'FIJO' ? 'Centro fijo' : v.rotationMode === 'DIARIO' ? 'Cambia de centro cada día' : v.rotationMode === 'SEGUN_GRUPO' ? 'Sigue al grupo' : 'Cambia de centro cada semana'} | Inicio en {v.startCenter || v.centerMode || 'CEHORPA'}
                                                 </div>
                                             </div>
                                             <button onClick={() => removeVerde(v.id)} className="text-red-500 hover:bg-red-50 p-1 rounded"><Icon path={Icons.Trash} className="w-4 h-4" /></button>

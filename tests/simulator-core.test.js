@@ -4,7 +4,9 @@ const {
     calculateRotationHeadIndex,
     differenceInCalendarDays,
     formatLocalDate,
+    getInclusivePeriodEndDate,
     getMonday,
+    getVerdeSchedule,
     normalizeConfig,
     parseLocalDate,
     validateConfig
@@ -33,6 +35,53 @@ test('Monday calculation remains on the local calendar', () => {
 
 test('calendar day differences are stable across daylight-saving transitions', () => {
     assert.equal(differenceInCalendarDays(parseLocalDate('2026-03-28'), parseLocalDate('2026-03-30')), 2);
+});
+
+test('inclusive green periods cover exactly seven calendar days across daylight-saving changes', () => {
+    assert.equal(getInclusivePeriodEndDate('2026-03-28', 7), '2026-04-03');
+    assert.equal(getInclusivePeriodEndDate('2026-10-04', 7), '2026-10-10');
+    assert.equal(getInclusivePeriodEndDate('invalid', 7), null);
+});
+
+test('green scheduling respects the selected start and inclusive end dates', () => {
+    const verde = {
+        startDate: '2026-10-05',
+        endDate: '2026-10-11',
+        startCycleIndex: 0,
+        startCenter: 'CORTIJOS',
+        rotationMode: 'FIJO'
+    };
+    assert.equal(getVerdeSchedule(verde, parseLocalDate('2026-10-04'), 'CORTIJOS'), null);
+    assert.deepEqual(getVerdeSchedule(verde, parseLocalDate('2026-10-05'), 'CORTIJOS'), {
+        effectiveCenter: 'CORTIJOS',
+        role: 'GUARDIA',
+        assigned: true
+    });
+    assert.deepEqual(getVerdeSchedule(verde, parseLocalDate('2026-10-07'), 'CORTIJOS'), {
+        effectiveCenter: 'CORTIJOS',
+        role: 'MADRUGA',
+        assigned: true
+    });
+    assert.equal(getVerdeSchedule(verde, parseLocalDate('2026-10-12'), 'CORTIJOS'), null);
+});
+
+test('green patterns and weekly center rotation advance from the selected start week', () => {
+    const verde = {
+        startDate: '2026-10-05',
+        startCycleIndex: 0,
+        startCenter: 'CORTIJOS',
+        rotationMode: 'SEMANAL'
+    };
+    assert.deepEqual(getVerdeSchedule(verde, parseLocalDate('2026-10-13'), 'CEHORPA'), {
+        effectiveCenter: 'CEHORPA',
+        role: 'GUARDIA',
+        assigned: true
+    });
+    assert.deepEqual(getVerdeSchedule(verde, parseLocalDate('2026-10-12'), 'CEHORPA'), {
+        effectiveCenter: 'CEHORPA',
+        role: 'MADRUGA',
+        assigned: true
+    });
 });
 
 test('rotation skips Sundays and supports dates beyond the old 10,000-day limit', () => {

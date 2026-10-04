@@ -36,6 +36,55 @@
         return Math.round((endUtc - startUtc) / 86400000);
     };
 
+    const getInclusivePeriodEndDate = (startDateString, periodDays) => {
+        const startDate = parseLocalDate(startDateString);
+        if (!startDate || !Number.isInteger(periodDays) || periodDays < 1) return null;
+        startDate.setDate(startDate.getDate() + periodDays - 1);
+        return formatLocalDate(startDate);
+    };
+
+    const getVerdeSchedule = (verde, targetDate, currentCenter) => {
+        const target = new Date(targetDate);
+        target.setHours(0, 0, 0, 0);
+        const startDate = parseLocalDate(verde.startDate);
+        const endDate = verde.endDate ? parseLocalDate(verde.endDate) : null;
+        if (!startDate || (verde.endDate && !endDate) || target < startDate || (endDate && target > endDate)) return null;
+
+        const startMonday = getMonday(startDate);
+        const targetMonday = getMonday(target);
+        const weeksPassed = Math.round(differenceInCalendarDays(startMonday, targetMonday) / 7);
+        const baseCycle = Number(verde.startCycleIndex ?? verde.offset ?? 0);
+        if (!Number.isInteger(baseCycle) || baseCycle < 0 || baseCycle > 2) return null;
+        const patterns = [
+            { guardia: [1, 4], madruga: [3, 6] },
+            { guardia: [2, 5], madruga: [1, 4] },
+            { guardia: [3, 6], madruga: [2, 5] }
+        ];
+        const pattern = patterns[((baseCycle + weeksPassed) % patterns.length + patterns.length) % patterns.length];
+        const startCenter = verde.startCenter || (verde.centerMode === 'CORTIJOS' ? 'CORTIJOS' : 'CEHORPA');
+        const otherCenter = startCenter === 'CORTIJOS' ? 'CEHORPA' : 'CORTIJOS';
+        const rotationMode = verde.rotationMode || (verde.rotatesCenter ? 'SEMANAL' : 'FIJO');
+        let effectiveCenter = startCenter;
+
+        if (rotationMode === 'SEMANAL') {
+            effectiveCenter = weeksPassed % 2 === 0 ? startCenter : otherCenter;
+        } else if (rotationMode === 'DIARIO') {
+            const daysPassed = differenceInCalendarDays(startDate, target);
+            effectiveCenter = daysPassed % 2 === 0 ? startCenter : otherCenter;
+        } else if (rotationMode === 'SEGUN_GRUPO') {
+            effectiveCenter = currentCenter;
+        }
+
+        const dayOfWeek = target.getDay();
+        const role = pattern.guardia.includes(dayOfWeek)
+            ? 'GUARDIA'
+            : pattern.madruga.includes(dayOfWeek)
+                ? 'MADRUGA'
+                : null;
+
+        return { effectiveCenter, role, assigned: Boolean(role && effectiveCenter === currentCenter) };
+    };
+
     const countWeekdaysBetween = (startDate, endDate) => {
         const startUtc = Date.UTC(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
         const days = differenceInCalendarDays(startDate, endDate);
@@ -227,6 +276,8 @@
         parseLocalDate,
         getMonday,
         differenceInCalendarDays,
+        getInclusivePeriodEndDate,
+        getVerdeSchedule,
         calculateRotationHeadIndex,
         validateConfig,
         normalizeConfig
