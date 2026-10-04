@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Simulador de Turnos (Supabase) - Refactorizado</title>
+    <title>Simulador de Turnos</title>
     
     <!-- TAILWIND CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -17,6 +17,7 @@
 
     <!-- SUPABASE JS -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="./simulator-core.js"></script>
     
     <style>
         body { -webkit-tap-highlight-color: transparent; background-color: #f9fafb; }
@@ -34,19 +35,20 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useMemo, useRef } = React;
+        const { useState, useEffect, useMemo } = React;
+        const { formatLocalDate, parseLocalDate, getMonday, differenceInCalendarDays, calculateRotationHeadIndex, validateConfig, normalizeConfig } = window.SimulatorCore;
 
         // ==========================================
         // 1. CONSTANTES, ICONOS Y HELPERS
         // ==========================================
         const PRECONFIGURED_URL = "https://dwccmujoouxzovbhndpx.supabase.co";
-        const PRECONFIGURED_KEY = "sb_publishable_x7wvlT-vPhu5p8i5k7Wa-Q_yb3s1slS"; 
+        const PRECONFIGURED_KEY = "sb_publishable_x7wvlT-vPhu5p8i5k7Wa-Q_yb3s1slS";
         const COLLA_NAMES = { '1': 'RAYO', '2': 'MIGUEL SEXI' };
 
-        const INITIAL_NAMES_COLLA1 = ["CORTES", "UTRERA", "MANGUI", "LEKIO", "LARRI", "FRANCI", "COCINERO", "ROMARIO", "RIVAS", "EXTRABOT", "DIEGUEZ", "CHANCHI", "MAKINA", "SANTANA", "COLORAO", "EMILIO", "GORRI"];
-        const INITIAL_REF_DATA_COLLA1 = { dateString: "2025-12-06", firstGuardName: "CORTES", center: "CORTIJOS" };
-        const INITIAL_NAMES_COLLA2 = ["MIGUEL SEXI", "MIGUEL VALLES", "MOLERO", "MANU", "JESÚS", "MANOLO ZAPATA", "ABRAR", "JOSE", "MARTÍNEZ", "ZEUS", "CHITO", "CAMILO", "CHEMA", "RAFAEL", "AGUSTÍN"]; 
-        const INITIAL_REF_DATA_COLLA2 = { dateString: "2025-12-06", firstGuardName: "ABRAR", center: "CEHORPA" };
+        const INITIAL_NAMES_COLLA1 = ["PERSONA 01", "PERSONA 02", "PERSONA 03", "PERSONA 04", "PERSONA 05", "PERSONA 06", "PERSONA 07", "PERSONA 08", "PERSONA 09", "PERSONA 10", "PERSONA 11", "PERSONA 12", "PERSONA 13", "PERSONA 14", "PERSONA 15", "PERSONA 16", "PERSONA 17"];
+        const INITIAL_REF_DATA_COLLA1 = { dateString: "2025-12-06", firstGuardName: "PERSONA 01", center: "CORTIJOS" };
+        const INITIAL_NAMES_COLLA2 = ["PERSONA 01", "PERSONA 02", "PERSONA 03", "PERSONA 04", "PERSONA 05", "PERSONA 06", "PERSONA 07", "PERSONA 08", "PERSONA 09", "PERSONA 10", "PERSONA 11", "PERSONA 12", "PERSONA 13", "PERSONA 14", "PERSONA 15"];
+        const INITIAL_REF_DATA_COLLA2 = { dateString: "2025-12-06", firstGuardName: "PERSONA 01", center: "CEHORPA" };
 
         const DEFAULT_CONFIG = {
             cehorpa: { guardias: 6, madrugan: 4, horaGuardia: "10:00", horaMadruga: "07:00", horaResto: "09:00" },
@@ -82,15 +84,6 @@
         // 3. MOTOR DE LÓGICA (Funciones Puras)
         // ==========================================
         
-        const getMonday = (d) => { 
-            const dObj = new Date(d); 
-            const day = dObj.getDay(); 
-            const diff = dObj.getDate() - day + (day === 0 ? -6 : 1); 
-            const mon = new Date(dObj.setDate(diff)); 
-            mon.setHours(0,0,0,0); 
-            return mon; 
-        };
-
         // LÓGICA CLAVE: ASIGNAR ETIQUETAS SOLO A NORMALES (Desde el principio)
         const assignLabelsToNormals = (peopleList, labelsQueue) => {
             let labelIndex = 0;
@@ -113,6 +106,9 @@
             const cVerdes = cData.verdes || [];
             const cRefData = cData.refData || (targetCollaId === '1' ? INITIAL_REF_DATA_COLLA1 : INITIAL_REF_DATA_COLLA2);
             const cAbsencesList = cData.absences || [];
+            const safeTargetDate = new Date(targetDate);
+            safeTargetDate.setHours(0, 0, 0, 0);
+            const dateStr = formatLocalDate(safeTargetDate);
 
             const isAbsent = (pName, dStr) => {
                 return cAbsencesList.find(a => {
@@ -123,17 +119,14 @@
                 });
             };
 
-            const dayOfWeek = targetDate.getDay();
+            const dayOfWeek = safeTargetDate.getDay();
             if (dayOfWeek === 0) return { isSunday: true, date: targetDate };
 
-            const dateStr = targetDate.toISOString().split('T')[0];
-            const [ry, rm, rd] = (cRefData.dateString || "2025-12-06").split('-').map(Number);
-            const refDateObj = new Date(ry, rm - 1, rd);
-            const oneDay = 24 * 60 * 60 * 1000;
+            const refDateObj = parseLocalDate(cRefData.dateString || "2025-12-06")
+                || parseLocalDate("2025-12-06");
             const refMonday = getMonday(refDateObj);
-            const targetMonday = getMonday(targetDate);
-            const diffWeeksTime = targetMonday.getTime() - refMonday.getTime();
-            const weeksPassed = Math.round(diffWeeksTime / (oneDay * 7));
+            const targetMonday = getMonday(safeTargetDate);
+            const weeksPassed = Math.round(differenceInCalendarDays(refMonday, targetMonday) / 7);
             const CENTERS = ['CORTIJOS', 'CEHORPA'];
             const refCenterIndex = cRefData.center === 'CORTIJOS' ? 0 : 1;
             const refDayOfWeekIndex = (refDateObj.getDay() + 6) % 7; 
@@ -144,56 +137,17 @@
             let currentCenter = CENTERS[targetCenterIndex];
 
             // --- LÓGICA DE ROTACIÓN "CORREACTURNO" ---
-            let currentDate = new Date(refDateObj); currentDate.setHours(0,0,0,0);
-            const targetTime = new Date(targetDate); targetTime.setHours(0,0,0,0);
-            let currentHeadName = cRefData.firstGuardName; 
-            if (!cNames.includes(currentHeadName)) currentHeadName = cNames[0];
-
-            const direction = targetTime >= currentDate ? 1 : -1;
-            let guard = 0;
-            
-            while (currentDate.getTime() !== targetTime.getTime() && guard < 10000) {
-                guard++;
-                const nextDate = new Date(currentDate); 
-                nextDate.setDate(currentDate.getDate() + direction);
-                const dw = nextDate.getDay();
-                const nextDateStr = nextDate.toISOString().split('T')[0];
-
-                if (dw !== 0) { 
-                    if (direction === 1) {
-                        let startIndex = cNames.indexOf(currentHeadName);
-                        if (startIndex === -1) startIndex = 0;
-                        let found = false; let offset = 1;
-                        while (!found && offset < cNames.length * 2) {
-                            const candidateName = cNames[(startIndex + offset) % cNames.length];
-                            const abs = isAbsent(candidateName, nextDateStr);
-                            if (!abs || abs.shiftsRotation === false) { 
-                                currentHeadName = candidateName; 
-                                found = true; 
-                            }
-                            offset++;
-                        }
-                    } else {
-                        let startIndex = cNames.indexOf(currentHeadName);
-                        if (startIndex === -1) startIndex = 0;
-                        let found = false; let offset = 1;
-                        while (!found && offset < cNames.length * 2) {
-                            const candidateName = cNames[(startIndex - offset + cNames.length * 2) % cNames.length];
-                            const abs = isAbsent(candidateName, nextDateStr);
-                            if (!abs || abs.shiftsRotation === false) { 
-                                currentHeadName = candidateName; 
-                                found = true; 
-                            }
-                            offset++;
-                        }
-                    }
-                }
-                currentDate = nextDate;
-            }
+            const targetTime = safeTargetDate;
+            const headStartIndex = calculateRotationHeadIndex({
+                referenceDate: refDateObj,
+                targetDate: targetTime,
+                names: cNames,
+                firstGuardName: cRefData.firstGuardName,
+                absences: cAbsencesList
+            });
 
             const absentPeople = [];
             const activePeople = [];
-            let headStartIndex = cNames.indexOf(currentHeadName);
             for (let i = 0; i < cNames.length; i++) {
                 const name = cNames[(headStartIndex + i) % cNames.length];
                 const abs = isAbsent(name, dateStr);
@@ -225,19 +179,18 @@
             const remainingVerdesList = [];
 
             cVerdes.forEach(v => {
-                const vStartDate = v.startDate ? new Date(v.startDate) : new Date(refDateObj);
-                vStartDate.setHours(0,0,0,0);
+                const vStartDate = v.startDate ? parseLocalDate(v.startDate) : new Date(refDateObj);
+                if (!vStartDate) return;
                 if (targetTime < vStartDate.getTime()) return;
 
                 if (v.endDate) {
-                    const vEndDate = new Date(v.endDate);
-                    vEndDate.setHours(0,0,0,0);
+                    const vEndDate = parseLocalDate(v.endDate);
+                    if (!vEndDate) return;
                     if (targetTime > vEndDate.getTime()) return;
                 }
 
                 const vStartMonday = getMonday(vStartDate);
-                const diffTime = targetMonday.getTime() - vStartMonday.getTime();
-                const verdeWeeksPassed = Math.round(diffTime / (oneDay * 7));
+                const verdeWeeksPassed = Math.round(differenceInCalendarDays(vStartMonday, targetMonday) / 7);
 
                 const baseCycle = v.startCycleIndex !== undefined ? parseInt(v.startCycleIndex) : (v.offset ? parseInt(v.offset) : 0);
                 const currentCycleIndex = ((baseCycle + verdeWeeksPassed) % 3 + 3) % 3;
@@ -253,7 +206,7 @@
                     const isEvenWeek = verdeWeeksPassed % 2 === 0;
                     effectiveCenter = isEvenWeek ? startCenter : otherCenter;
                 } else if (rotationMode === 'DIARIO') {
-                    const diffDays = Math.floor((targetTime.getTime() - vStartDate.getTime()) / oneDay);
+                    const diffDays = differenceInCalendarDays(vStartDate, targetTime);
                     const isEvenDay = diffDays % 2 === 0;
                     effectiveCenter = isEvenDay ? startCenter : otherCenter;
                 } else if (rotationMode === 'FIJO') {
@@ -298,7 +251,7 @@
                 const madrugaCount = config.cortijos.madrugan;
                 if (remaining.length >= madrugaCount) {
                     mNormals = remaining.slice(remaining.length - madrugaCount);
-                    iNormals = remaining.slice(0, remaining.length - madrugaCount);
+                    iNormals = remaining.slice(0, config.cortijos.intermedios);
                 } else {
                     mNormals = remaining;
                     iNormals = [];
@@ -467,23 +420,35 @@
             );
         };
 
-        const Header = ({ activeColla, setActiveColla, connectionStatus, onSettingsClick, onConnectClick }) => (
-            <header className="bg-slate-800 text-white py-3 px-4 shadow-md sticky top-0 z-30 flex justify-between items-center shrink-0">
-                <div className="flex items-center gap-2">
-                    <div className="bg-white/10 p-1.5 rounded-lg"><Icon path={Icons.Cal} className="w-5 h-5" /></div>
-                    <h1 className="font-bold text-base tracking-tight">Simulador</h1>
-                </div>
-                <div className="flex items-center bg-slate-700/50 rounded-lg p-1 border border-slate-600">
-                    <button onClick={() => setActiveColla('1')} className={`px-3 py-1 rounded text-[10px] font-bold transition ${activeColla === '1' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400 hover:text-white'}`}>RAYO</button>
-                    <button onClick={() => setActiveColla('2')} className={`px-3 py-1 rounded text-[10px] font-bold transition ${activeColla === '2' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400 hover:text-white'}`}>MIGUEL SEXI</button>
-                </div>
-                <div className="flex items-center gap-2">
-                    {connectionStatus === "connected" 
-                        ? <span onClick={onConnectClick} className="w-2 h-2 rounded-full bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.8)] cursor-pointer"></span> 
-                        : <span onClick={onConnectClick} className="w-2 h-2 rounded-full bg-red-400 cursor-pointer"></span>}
-                    <button onClick={onSettingsClick} className="p-2 rounded-full bg-white/10 hover:bg-white/20 transition relative z-40"><Icon path={Icons.Set} className="w-5 h-5" /></button>
-                </div>
-            </header>
+        const Header = ({ activeColla, setActiveColla, cloudStatus, cloudError, onCloudRetry, onSettingsClick }) => (
+            <>
+                <header className="bg-slate-800 text-white py-3 px-4 shadow-md sticky top-0 z-30 flex justify-between items-center shrink-0">
+                    <div className="flex items-center gap-2">
+                        <div className="bg-white/10 p-1.5 rounded-lg"><Icon path={Icons.Cal} className="w-5 h-5" /></div>
+                        <h1 className="font-bold text-base tracking-tight">Simulador</h1>
+                    </div>
+                    <div className="flex items-center bg-slate-700/50 rounded-lg p-1 border border-slate-600">
+                        <button onClick={() => setActiveColla('1')} className={`px-3 py-1 rounded text-[10px] font-bold transition ${activeColla === '1' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400 hover:text-white'}`}>RAYO</button>
+                        <button onClick={() => setActiveColla('2')} className={`px-3 py-1 rounded text-[10px] font-bold transition ${activeColla === '2' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400 hover:text-white'}`}>MIGUEL SEXI</button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={onCloudRetry}
+                            title={cloudError || (cloudStatus === 'connected' ? 'Sincronizado con Supabase' : 'Pulsa para volver a conectar con Supabase')}
+                            className={`rounded px-2 py-1 text-[9px] font-bold ${cloudStatus === 'connected' ? 'bg-emerald-700 text-emerald-100' : cloudStatus === 'connecting' ? 'bg-amber-600 text-white' : 'bg-red-700 text-red-100'}`}
+                        >
+                            {cloudStatus === 'connected' ? 'NUBE' : cloudStatus === 'connecting' ? 'CONECTANDO' : 'SIN CONEXIÓN'}
+                        </button>
+                        <button onClick={onSettingsClick} className="p-2 rounded-full bg-white/10 hover:bg-white/20 transition relative z-40"><Icon path={Icons.Set} className="w-5 h-5" /></button>
+                    </div>
+                </header>
+                {cloudStatus === 'error' && cloudError && (
+                    <div role="alert" className="bg-red-50 border-b border-red-200 px-4 py-2 text-center text-xs text-red-800">
+                        {cloudError}
+                    </div>
+                )}
+            </>
         );
 
         const ControlBar = ({ selectedDate, setSelectedDate, viewMode, setViewMode, onSearch, onStats, onShare, weekData, handlePrev, handleNext, handleToday, isToday }) => (
@@ -502,7 +467,7 @@
                                             }
                                     </div>
                                 </div>
-                                <input type="date" className="date-input-hidden" value={selectedDate.toISOString().split('T')[0]} onChange={(e) => setSelectedDate(new Date(e.target.value))} />
+                                <input type="date" className="date-input-hidden" value={formatLocalDate(selectedDate)} onChange={(e) => { const date = parseLocalDate(e.target.value); if (date) setSelectedDate(date); }} />
                             </div>
                             <button onClick={handleNext} className="p-2 rounded-lg hover:bg-white hover:shadow-sm text-slate-500 transition active:scale-95"><Icon path={Icons.Arrow} className="w-4 h-4" /></button>
                         </div>
@@ -663,6 +628,21 @@
             const [selectedDate, setSelectedDate] = useState(new Date());
             const [activeColla, setActiveColla] = useState('1'); 
             const [globalConfig, setGlobalConfig] = useState(DEFAULT_CONFIG);
+            const [supabaseClient, setSupabaseClient] = useState(null);
+            const [cloudStatus, setCloudStatus] = useState('connecting');
+            const [cloudError, setCloudError] = useState('');
+            const connectionAttemptRef = React.useRef(false);
+            const localChangesPendingRef = React.useRef(localStorage.getItem('turnos_pending_sync_v1') === 'true');
+            const saveQueueRef = React.useRef(Promise.resolve());
+            const setLocalChangesPending = pending => {
+                localChangesPendingRef.current = pending;
+                try {
+                    if (pending) localStorage.setItem('turnos_pending_sync_v1', 'true');
+                    else localStorage.removeItem('turnos_pending_sync_v1');
+                } catch (error) {
+                    console.error('No se pudo guardar el estado de sincronización local.', error);
+                }
+            };
             const [collasData, setCollasData] = useState({
                 '1': { names: INITIAL_NAMES_COLLA1, verdes: [], refData: INITIAL_REF_DATA_COLLA1, absences: [] },
                 '2': { names: INITIAL_NAMES_COLLA2, verdes: [], refData: INITIAL_REF_DATA_COLLA2, absences: [] }
@@ -678,11 +658,6 @@
             const absences = activeCollaData.absences || []; 
             const activeAbsencesList = absences.map(a => ({ ...a, status: a.type })).sort((a,b) => a.start.localeCompare(b.start));
 
-            const [supabaseClient, setSupabaseClient] = useState(null);
-            const [supabaseCreds, setSupabaseCreds] = useState({ url: PRECONFIGURED_URL, key: PRECONFIGURED_KEY });
-            const [connectionStatus, setConnectionStatus] = useState("disconnected");
-            const [showSupabaseModal, setShowSupabaseModal] = useState(false);
-
             const [viewMode, setViewMode] = useState('daily');
             const [showSettings, setShowSettings] = useState(false);
             const [showSearch, setShowSearch] = useState(false);
@@ -692,7 +667,7 @@
             
             const [searchType, setSearchType] = useState('person'); 
             const [searchPerson, setSearchPerson] = useState("");
-            const [searchDateQuery, setSearchDateQuery] = useState(new Date().toISOString().split('T')[0]);
+            const [searchDateQuery, setSearchDateQuery] = useState(formatLocalDate(new Date()));
             const [searchRange, setSearchRange] = useState(7);
             const [searchResults, setSearchResults] = useState(null);
 
@@ -701,7 +676,7 @@
             
             const [newVerde, setNewVerde] = useState({ 
                 name: "", 
-                startDate: new Date().toISOString().split('T')[0],
+                startDate: formatLocalDate(new Date()),
                 startCycleIndex: 0,
                 startCenter: "CORTIJOS",
                 rotationMode: "SEMANAL", 
@@ -710,96 +685,189 @@
 
             const [transferName, setTransferName] = useState("");
             const [transferPos, setTransferPos] = useState(1);
-            const [absenceForm, setAbsenceForm] = useState({ name: '', type: 'BAJA', start: new Date().toISOString().split('T')[0], end: '', shiftsRotation: true });
+            const [absenceForm, setAbsenceForm] = useState({ name: '', type: 'BAJA', start: formatLocalDate(new Date()), end: '', shiftsRotation: true });
             const [tempConfig, setTempConfig] = useState(null);
             const [tempRefData, setTempRefData] = useState(null);
             const [transferSource, setTransferSource] = useState('1');
 
-            useEffect(() => {
-                const savedUrl = localStorage.getItem('sb_url') || PRECONFIGURED_URL;
-                const savedKey = localStorage.getItem('sb_key') || PRECONFIGURED_KEY;
+            const showMessage = (title, message) => setModalConfig({
+                show: true,
+                title,
+                message,
+                isAlert: true,
+                onConfirm: () => setModalConfig(prev => ({ ...prev, show: false }))
+            });
 
-                if (savedUrl && savedKey) {
-                    setSupabaseCreds({ url: savedUrl, key: savedKey });
-                    initSupabase(savedUrl, savedKey);
-                } else {
-                    const savedLocal = localStorage.getItem('turnos_data_v6'); 
-                    if(savedLocal) {
-                        try {
-                            const parsed = JSON.parse(savedLocal);
-                            if(parsed.collas) sanitizeAndSetCollas(parsed.collas);
-                            if(parsed.config) setGlobalConfig(parsed.config);
-                        } catch(e) {}
+            useEffect(() => {
+                try {
+                    const savedLocal = localStorage.getItem('turnos_data_offline_v1');
+                    if (!savedLocal) return;
+                    const parsed = JSON.parse(savedLocal);
+                    if (parsed.collas) sanitizeAndSetCollas(parsed.collas);
+                    if (parsed.config) {
+                        const normalized = normalizeConfig(parsed.config, DEFAULT_CONFIG);
+                        setGlobalConfig(normalized.config);
+                        if (normalized.errors.length) showMessage('Configuración inválida', 'Se han detectado valores no válidos en los datos locales. Se cargarán los valores predeterminados.');
+                        else if (normalized.adjustedIntermedios) showMessage('Configuración ajustada', 'Se ha actualizado el número de intermedios para completar la capacidad de Cortijos.');
                     }
+                } catch (error) {
+                    showMessage('Error al cargar datos locales', 'No se pudieron leer los datos guardados en este navegador.');
                 }
             }, []);
 
+            const connectToSupabase = async () => {
+                if (connectionAttemptRef.current) return;
+                connectionAttemptRef.current = true;
+                setCloudStatus('connecting');
+                setCloudError('');
+                try {
+                    if (!window.supabase) throw new Error('No se pudo cargar la librería de Supabase.');
+                    const client = window.supabase.createClient(PRECONFIGURED_URL, PRECONFIGURED_KEY);
+                    const { data, error } = await client
+                        .from('shift_data')
+                        .select('content')
+                        .eq('id', 'main_config')
+                        .maybeSingle();
+                    if (error) throw error;
+
+                    const savedLocal = localStorage.getItem('turnos_data_offline_v1');
+                    if (localChangesPendingRef.current && savedLocal) {
+                        const parsed = JSON.parse(savedLocal);
+                        const { error: saveError } = await client
+                            .from('shift_data')
+                            .upsert({ id: 'main_config', content: parsed });
+                        if (saveError) throw saveError;
+                        if (parsed.collas) sanitizeAndSetCollas(parsed.collas);
+                        if (parsed.config) {
+                            const normalized = normalizeConfig(parsed.config, DEFAULT_CONFIG);
+                            setGlobalConfig(normalized.config);
+                        }
+                        setLocalChangesPending(false);
+                    } else if (data && data.content) {
+                        const content = data.content;
+                        if (content.collas) sanitizeAndSetCollas(content.collas);
+                        if (content.config) {
+                            const normalized = normalizeConfig(content.config, DEFAULT_CONFIG);
+                            setGlobalConfig(normalized.config);
+                            if (normalized.errors.length) showMessage('Configuración inválida', 'La configuración recibida de Supabase no es válida; se cargaron los valores predeterminados.');
+                            else if (normalized.adjustedIntermedios) showMessage('Configuración ajustada', 'Se ajustó el número de intermedios para completar la capacidad de Cortijos.');
+                        }
+                        localStorage.setItem('turnos_data_offline_v1', JSON.stringify(content));
+                    } else if (savedLocal) {
+                        const parsed = JSON.parse(savedLocal);
+                        const { error: saveError } = await client
+                            .from('shift_data')
+                            .upsert({ id: 'main_config', content: parsed });
+                        if (saveError) throw saveError;
+                        if (parsed.collas) sanitizeAndSetCollas(parsed.collas);
+                        if (parsed.config) {
+                            const normalized = normalizeConfig(parsed.config, DEFAULT_CONFIG);
+                            setGlobalConfig(normalized.config);
+                        }
+                        setLocalChangesPending(false);
+                    }
+
+                    setSupabaseClient(client);
+                    setCloudStatus('connected');
+                } catch (error) {
+                    setSupabaseClient(null);
+                    setCloudStatus('error');
+                    const reason = error && error.message ? ` Detalle: ${error.message}` : '';
+                    const message = `No se pudo conectar con Supabase. Revisa las políticas anon de shift_data. Puedes reintentar pulsando el indicador de nube.${reason}`;
+                    setCloudError(message);
+                    showMessage('Supabase no conectado', `La aplicación seguirá guardando en este navegador. ${message}`);
+                } finally {
+                    connectionAttemptRef.current = false;
+                }
+            };
+
+            useEffect(() => {
+                connectToSupabase();
+            }, []);
+
             const sanitizeAndSetCollas = (loadedCollas) => {
-                const safeCollas = { ...collasData };
+                const safeCollas = {
+                    '1': { names: INITIAL_NAMES_COLLA1, verdes: [], refData: INITIAL_REF_DATA_COLLA1, absences: [] },
+                    '2': { names: INITIAL_NAMES_COLLA2, verdes: [], refData: INITIAL_REF_DATA_COLLA2, absences: [] }
+                };
                 ['1', '2'].forEach(key => {
-                    const loaded = loadedCollas[key];
+                    const loaded = loadedCollas && loadedCollas[key];
                     if (loaded) {
                         safeCollas[key] = {
-                            names: (loaded.names && loaded.names.length > 0) ? loaded.names : (key === '1' ? INITIAL_NAMES_COLLA1 : INITIAL_NAMES_COLLA2),
-                            verdes: loaded.verdes || [],
-                            refData: loaded.refData || (key === '1' ? INITIAL_REF_DATA_COLLA1 : INITIAL_REF_DATA_COLLA2),
-                            absences: loaded.absences || []
+                            names: Array.isArray(loaded.names) && loaded.names.length > 0 ? loaded.names : safeCollas[key].names,
+                            verdes: Array.isArray(loaded.verdes) ? loaded.verdes : [],
+                            refData: loaded.refData || safeCollas[key].refData,
+                            absences: Array.isArray(loaded.absences) ? loaded.absences : []
                         };
                     }
                 });
                 setCollasData(safeCollas);
             };
 
-            const initSupabase = async (url, key) => {
+            const saveAllData = async (nextCollasData = collasData, nextConfig = globalConfig) => {
+                const finalCollas = {
+                    '1': { ...nextCollasData['1'], names: nextCollasData['1'].names.length ? nextCollasData['1'].names : INITIAL_NAMES_COLLA1 },
+                    '2': { ...nextCollasData['2'], names: nextCollasData['2'].names.length ? nextCollasData['2'].names : INITIAL_NAMES_COLLA2 }
+                };
+                const dataToSave = { collas: finalCollas, config: nextConfig };
+                setCollasData(finalCollas);
+                setGlobalConfig(nextConfig);
                 try {
-                    const client = window.supabase.createClient(url, key);
-                    setSupabaseClient(client);
-                    const { data, error } = await client.from('shift_data').select('*').eq('id', 'main_config').single();
-                    if (error && error.code !== 'PGRST116') { setConnectionStatus("error"); return; }
-                    setConnectionStatus("connected");
-                    localStorage.setItem('sb_url', url);
-                    localStorage.setItem('sb_key', key);
-                    setShowSupabaseModal(false);
+                    localStorage.setItem('turnos_data_offline_v1', JSON.stringify(dataToSave));
+                } catch (error) {
+                    showMessage('Error al guardar', 'No se pudieron guardar los cambios en este navegador. Comprueba el espacio disponible y los permisos del navegador.');
+                    return false;
+                }
 
-                    if (data && data.content) {
-                        const content = data.content;
-                        if (content.collas) sanitizeAndSetCollas(content.collas);
-                        if (content.config) setGlobalConfig(content.config);
-                    }
-                } catch (e) { setConnectionStatus("error"); }
-            };
+                if (!supabaseClient || cloudStatus !== 'connected') {
+                    setLocalChangesPending(true);
+                    showMessage('Guardado solo en este dispositivo', 'Supabase no está conectado; el cambio se guardó localmente, pero todavía no se ha sincronizado con la nube.');
+                    return true;
+                }
 
-            const saveAllData = async (newCollasData = null, newConfig = null) => {
-                const finalCollas = newCollasData || collasData;
-                const finalConfig = newConfig || globalConfig;
-                if(!finalCollas['1'].names || finalCollas['1'].names.length === 0) finalCollas['1'].names = INITIAL_NAMES_COLLA1;
-                if(!finalCollas['2'].names || finalCollas['2'].names.length === 0) finalCollas['2'].names = INITIAL_NAMES_COLLA2;
-                
-                const dataToSave = { collas: finalCollas, config: finalConfig };
-                if (newCollasData) setCollasData(finalCollas);
-                if (newConfig) setGlobalConfig(finalConfig);
-
-                if (supabaseClient && connectionStatus === "connected") {
-                    try { await supabaseClient.from('shift_data').upsert({ id: 'main_config', content: dataToSave }); } 
-                    catch (e) { 
-                        setModalConfig({ show: true, title: 'Error', message: 'Error al guardar en la nube', isAlert: true, onConfirm: () => setModalConfig({...modalConfig, show: false}) });
-                    }
-                } else { localStorage.setItem('turnos_data_v6', JSON.stringify(dataToSave)); }
+                const saveOperation = saveQueueRef.current.then(async () => {
+                    const { error } = await supabaseClient
+                        .from('shift_data')
+                        .upsert({ id: 'main_config', content: dataToSave });
+                    if (error) throw error;
+                    setLocalChangesPending(false);
+                    return true;
+                }).catch(error => {
+                    setLocalChangesPending(true);
+                    setCloudStatus('error');
+                    const reason = error && error.message ? ` Detalle: ${error.message}` : '';
+                    const message = `El cambio se conservó en este navegador, pero no llegó a la nube. Pulsa el indicador de nube para reintentar.${reason}`;
+                    setCloudError(message);
+                    showMessage('Error al guardar en Supabase', message);
+                    return false;
+                });
+                saveQueueRef.current = saveOperation.then(() => undefined);
+                return saveOperation;
             };
 
             const updateActiveCollaData = (updates) => {
                 const newCollas = { ...collasData, [activeColla]: { ...collasData[activeColla], ...updates } };
-                saveAllData(newCollas);
+                return saveAllData(newCollas, globalConfig);
             };
 
-            const handleConnectSupabase = (e) => { e.preventDefault(); if (supabaseCreds.url && supabaseCreds.key) initSupabase(supabaseCreds.url, supabaseCreds.key); };
-            
-            const handleDisconnectSupabase = () => { 
-                localStorage.removeItem('sb_url'); localStorage.removeItem('sb_key'); setSupabaseClient(null); setConnectionStatus("disconnected"); 
-                setModalConfig({ show: true, title: 'Desconectado', message: 'Modo offline activado.', isAlert: true, onConfirm: () => setModalConfig({...modalConfig, show: false}) });
+            const handleAddName = (e) => {
+                e.preventDefault();
+                const nameToAdd = newName.trim().toLocaleUpperCase('es-ES');
+                if (!nameToAdd) return showMessage('Falta el nombre', 'Escribe el nombre de la persona que quieres añadir.');
+                const existingNames = [...names, ...verdes.map(person => person.name)];
+                if (existingNames.some(name => name.toLocaleUpperCase('es-ES') === nameToAdd)) {
+                    return showMessage('Nombre duplicado', 'Esa persona ya está registrada en esta colla.');
+                }
+                const position = newPosition === '' ? names.length + 1 : Number(newPosition);
+                if (!Number.isInteger(position) || position < 1 || position > names.length + 1) {
+                    return showMessage('Posición no válida', `La posición debe ser un número entre 1 y ${names.length + 1}.`);
+                }
+                const updatedNames = [...names];
+                updatedNames.splice(position - 1, 0, nameToAdd);
+                updateActiveCollaData({ names: updatedNames });
+                setNewName("");
+                setNewPosition("");
             };
-            
-            const handleAddName = (e) => { e.preventDefault(); if (newName.trim()) { const nameToAdd = newName.toUpperCase().trim(); let updatedNames = [...names]; const pos = parseInt(newPosition); if (!isNaN(pos) && pos >= 1 && pos <= names.length + 1) { updatedNames.splice(pos - 1, 0, nameToAdd); } else { updatedNames.push(nameToAdd); } updateActiveCollaData({ names: updatedNames }); setNewName(""); setNewPosition(""); } };
             
             const handleRemoveName = (idx) => { 
                 setModalConfig({
@@ -815,20 +883,32 @@
                 });
             };
             
-            const addVerde = (e) => { 
-                e.preventDefault(); 
-                if(newVerde.name) { 
-                    const updatedVerdes = [...verdes, { ...newVerde, id: Date.now() }]; 
-                    updateActiveCollaData({ verdes: updatedVerdes }); 
-                    setNewVerde({ 
-                        name: "", 
-                        startDate: new Date().toISOString().split('T')[0], 
-                        startCycleIndex: 0, 
-                        startCenter: "CORTIJOS", 
-                        rotationMode: "SEMANAL", 
-                        endDate: "" 
-                    }); 
-                } 
+            const addVerde = (e) => {
+                e.preventDefault();
+                const name = newVerde.name.trim().toLocaleUpperCase('es-ES');
+                const startDate = parseLocalDate(newVerde.startDate);
+                const endDate = newVerde.endDate ? parseLocalDate(newVerde.endDate) : null;
+                if (!name || !startDate) return showMessage('Datos no válidos', 'Escribe el nombre y una fecha de inicio válida para el personal especial.');
+                if (newVerde.endDate && !endDate) return showMessage('Fecha no válida', 'La fecha final del personal especial no es válida.');
+                if (endDate && endDate < startDate) return showMessage('Rango no válido', 'La fecha final no puede ser anterior a la fecha de inicio.');
+                if (![0, 1, 2].includes(Number(newVerde.startCycleIndex))) return showMessage('Patrón no válido', 'Selecciona un patrón de rotación inicial válido.');
+                if (!['CORTIJOS', 'CEHORPA'].includes(newVerde.startCenter) || !['SEMANAL', 'DIARIO', 'FIJO', 'SEGUN_GRUPO'].includes(newVerde.rotationMode)) {
+                    return showMessage('Configuración no válida', 'El centro o el tipo de rotación seleccionado no es válido.');
+                }
+                const existingNames = [...names, ...verdes.map(person => person.name)];
+                if (existingNames.some(personName => personName.toLocaleUpperCase('es-ES') === name)) {
+                    return showMessage('Nombre duplicado', 'Esa persona ya está registrada en esta colla.');
+                }
+                const updatedVerdes = [...verdes, { ...newVerde, name, id: Date.now() }];
+                updateActiveCollaData({ verdes: updatedVerdes });
+                setNewVerde({
+                    name: "",
+                    startDate: formatLocalDate(new Date()),
+                    startCycleIndex: 0,
+                    startCenter: "CORTIJOS",
+                    rotationMode: "SEMANAL",
+                    endDate: ""
+                });
             };
             
             const removeVerde = (id) => { 
@@ -841,21 +921,37 @@
                 });
             };
             
-            const handleSaveAbsence = () => {
+            const handleSaveAbsence = async () => {
                 const { name, type, start, shiftsRotation } = absenceForm;
-                if(!name || !type || !start) return setModalConfig({ show: true, title: 'Faltan datos', message: 'Rellena todos los campos', isAlert: true, onConfirm: () => setModalConfig(prev => ({...prev, show: false})) });
-                
-                const finalEnd = absenceForm.end ? absenceForm.end : null;
-                
-                const newAbsence = { id: Date.now(), name, type, start, end: finalEnd, shiftsRotation };
-                const newAbsences = [...absences, newAbsence].sort((a,b) => a.start.localeCompare(b.start));
-                updateActiveCollaData({ absences: newAbsences });
-                setAbsenceForm({ name: '', type: 'BAJA', start: new Date().toISOString().split('T')[0], end: '', shiftsRotation: true });
-                setModalConfig({ show: true, title: 'Guardado', message: 'Ausencia registrada correctamente.', isAlert: true, onConfirm: () => setModalConfig(prev => ({...prev, show: false})) });
+                const startDate = parseLocalDate(start);
+                const endDate = absenceForm.end ? parseLocalDate(absenceForm.end) : null;
+                const knownNames = [...names, ...verdes.map(person => person.name)];
+                if (!name || !startDate || !['BAJA', 'VACACIONES'].includes(type) || !knownNames.includes(name)) {
+                    return showMessage('Datos no válidos', 'Selecciona una persona, un tipo de ausencia y una fecha de inicio válida.');
+                }
+                if (absenceForm.end && !endDate) return showMessage('Fecha no válida', 'La fecha final de la ausencia no es válida.');
+                if (endDate && endDate < startDate) return showMessage('Rango no válido', 'La fecha final no puede ser anterior a la fecha de inicio.');
+                const rangeEnd = absenceForm.end || '9999-12-31';
+                const overlapsExisting = absences.some(absence =>
+                    absence.name === name &&
+                    start <= (absence.end || '9999-12-31') &&
+                    rangeEnd >= absence.start
+                );
+                if (overlapsExisting) return showMessage('Ausencia duplicada', 'Esta persona ya tiene una ausencia registrada en parte o en todo ese periodo.');
+
+                const newAbsence = { id: Date.now(), name, type, start, end: absenceForm.end || null, shiftsRotation };
+                const newAbsences = [...absences, newAbsence].sort((a, b) => a.start.localeCompare(b.start));
+                const saved = await updateActiveCollaData({ absences: newAbsences });
+                if (!saved) return;
+                setAbsenceForm({ name: '', type: 'BAJA', start: formatLocalDate(new Date()), end: '', shiftsRotation: true });
+                showMessage('Guardado', 'Ausencia registrada correctamente.');
             };
             
             const handleEndAbsence = (id) => {
-                const today = new Date().toISOString().split('T')[0];
+                const today = formatLocalDate(new Date());
+                const absence = absences.find(item => item.id === id);
+                if (!absence) return showMessage('Ausencia no encontrada', 'Actualiza la pantalla y vuelve a intentarlo.');
+                if (today < absence.start) return showMessage('No se puede dar de alta', 'La ausencia empieza en una fecha futura.');
                 const newAbsences = absences.map(a => { if (a.id === id) return { ...a, end: today }; return a; });
                 updateActiveCollaData({ absences: newAbsences });
             };
@@ -880,25 +976,63 @@
                         const sourceNames = [...collasData[sourceCollaId].names];
                         const targetNames = [...collasData[targetCollaId].names];
                         const idx = sourceNames.indexOf(transferName); 
-                        if(idx===-1) return;
+                        if (idx === -1) {
+                            setModalConfig(prev => ({ ...prev, show: false }));
+                            showMessage('Traspaso no realizado', 'La persona seleccionada ya no está en la colla de origen.');
+                            return;
+                        }
+                        if (targetNames.some(name => name.toLocaleUpperCase('es-ES') === transferName.toLocaleUpperCase('es-ES'))) {
+                            setModalConfig(prev => ({ ...prev, show: false }));
+                            showMessage('Traspaso no realizado', 'La persona ya está registrada en la colla de destino.');
+                            return;
+                        }
                         sourceNames.splice(idx, 1);
-                        let pos = parseInt(transferPos); if(isNaN(pos) || pos < 1) pos = 1; if(pos > targetNames.length+1) pos = targetNames.length+1;
+                        const pos = Number(transferPos);
+                        if (!Number.isInteger(pos) || pos < 1 || pos > targetNames.length + 1) {
+                            setModalConfig(prev => ({ ...prev, show: false }));
+                            showMessage('Posición no válida', `La posición debe ser un número entre 1 y ${targetNames.length + 1}.`);
+                            return;
+                        }
                         targetNames.splice(pos-1, 0, transferName);
                         const newCollasData = { ...collasData, [sourceCollaId]: {...collasData[sourceCollaId], names: sourceNames}, [targetCollaId]: {...collasData[targetCollaId], names: targetNames} };
-                        saveAllData(newCollasData);
-                        setTransferName(""); setTransferPos(1);
-                        setModalConfig(prev => ({...prev, show: false}));
+                        saveAllData(newCollasData, globalConfig).then(saved => {
+                            if (saved) {
+                                setTransferName("");
+                                setTransferPos(1);
+                                setModalConfig(prev => ({...prev, show: false}));
+                            }
+                        });
                     }
                 });
             };
 
             useEffect(() => { if (showSettings) { setTempConfig(globalConfig); setTempRefData(refData); setTransferSource(activeColla); } }, [showSettings, globalConfig, refData, activeColla]);
-            const saveSettingsToCloud = () => { saveAllData(null, tempConfig); updateActiveCollaData({ refData: tempRefData }); setShowSettings(false); };
+            const saveSettingsToCloud = async () => {
+                const configErrors = validateConfig(tempConfig);
+                if (configErrors.length) return showMessage('Configuración no válida', configErrors.join(' '));
+                if (!tempRefData || !parseLocalDate(tempRefData.dateString)) {
+                    return showMessage('Fecha de partida no válida', 'Selecciona una fecha válida para el punto de partida.');
+                }
+                if (!names.includes(tempRefData.firstGuardName)) {
+                    return showMessage('Primer guardia no válido', 'Selecciona como primer guardia a una persona que pertenezca a esta colla.');
+                }
+                if (!['CORTIJOS', 'CEHORPA'].includes(tempRefData.center)) {
+                    return showMessage('Centro no válido', 'Selecciona Cortijos o Cehorpa como centro inicial.');
+                }
+                const newCollas = {
+                    ...collasData,
+                    [activeColla]: { ...collasData[activeColla], refData: tempRefData }
+                };
+                const saved = await saveAllData(newCollas, tempConfig);
+                if (saved) {
+                    setShowSettings(false);
+                    showMessage('Guardado', 'La configuración y el punto de partida se guardaron correctamente.');
+                }
+            };
 
             useEffect(() => { setSimulation(calculateSimulation(selectedDate, activeColla, collasData, globalConfig)); }, [selectedDate, globalConfig, collasData, activeColla]);
 
             const calculateMonthlyStats = () => {
-                const today = new Date();
                 const year = selectedDate.getFullYear();
                 const month = selectedDate.getMonth();
                 const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -930,10 +1064,7 @@
 
             const weekData = useMemo(() => {
                 if (!names || !names.length) return null; 
-                const current = new Date(selectedDate);
-                const day = current.getDay();
-                const diff = current.getDate() - day + (day === 0 ? -6 : 1);
-                const monday = new Date(current.setDate(diff));
+                const monday = getMonday(selectedDate);
                 const days = [];
                 for (let i = 0; i < 6; i++) {
                     const d = new Date(monday); d.setDate(monday.getDate() + i);
@@ -997,13 +1128,14 @@
 
             const performSearch = () => {
                 if(searchType === 'person') {
-                    if (!searchPerson) return;
+                    if (!searchPerson) return showMessage('Falta la persona', 'Selecciona a una persona antes de buscar.');
                     let results = [];
                     let iterDate = new Date(selectedDate);
                     for (let i = 0; i < searchRange; i++) {
                         const sim = calculateSimulation(new Date(iterDate), activeColla, collasData, globalConfig);
                         let d = { date: new Date(iterDate), status: 'DESCONOCIDO', details: null };
-                        if (sim.isSunday) d.status = 'DOMINGO';
+                        if (!sim) d.status = 'NO DISPONIBLE';
+                        else if (sim.isSunday) d.status = 'DOMINGO';
                         else {
                              const pStatus = sim.personStatus[searchPerson];
                              if(pStatus) {
@@ -1017,7 +1149,7 @@
                     }
                     setSearchResults(results);
                 } else if(searchType === 'guardias_libres') {
-                    if (!searchPerson) return;
+                    if (!searchPerson) return showMessage('Falta la persona', 'Selecciona a una persona antes de buscar.');
                     let results = [];
                     let iterDate = new Date(selectedDate);
                     let foundCount = 0;
@@ -1040,17 +1172,19 @@
                     }
                     setSearchResults(results);
                 } else {
-                    const dateParts = searchDateQuery.split('-').map(Number);
-                    const target = new Date(dateParts[0], dateParts[1]-1, dateParts[2]);
+                    const target = parseLocalDate(searchDateQuery);
+                    if (!target) return showMessage('Fecha no válida', 'Selecciona una fecha válida para consultar las libras.');
                     const sim1 = calculateSimulation(target, '1', collasData, globalConfig);
                     const sim2 = calculateSimulation(target, '2', collasData, globalConfig);
                     let res = { date: target, status: 'OK', libras: [] };
-                    if(sim1 && sim1.isSunday) res.status = 'DOMINGO';
+                    if ((sim1 && sim1.isSunday) || (sim2 && sim2.isSunday)) res.status = 'DOMINGO';
                     else if (sim1 && sim2) {
                         res.libras = [
                             { colla: 'RAYO', name: sim1.libra, status: sim1.libraStatus },
                             { colla: 'MIGUEL SEXI', name: sim2.libra, status: sim2.libraStatus }
                         ];
+                    } else {
+                        res.status = 'NO DISPONIBLE';
                     }
                     setSearchResults([res]);
                 }
@@ -1059,7 +1193,7 @@
             // RENDER
             return (
                 <div className="min-h-screen bg-gray-50 text-gray-800 font-sans text-xs flex flex-col">
-                    <Header activeColla={activeColla} setActiveColla={setActiveColla} connectionStatus={connectionStatus} onSettingsClick={() => setShowSettings(true)} onConnectClick={() => setShowSupabaseModal(true)} />
+                    <Header activeColla={activeColla} setActiveColla={setActiveColla} cloudStatus={cloudStatus} cloudError={cloudError} onCloudRetry={connectToSupabase} onSettingsClick={() => setShowSettings(true)} />
                     
                     <ControlBar 
                         selectedDate={selectedDate} setSelectedDate={setSelectedDate} 
@@ -1098,8 +1232,6 @@
                              </div>
                         </div>
                     )}
-
-                    {showSupabaseModal && ( <div className="fixed inset-0 z-[150] bg-black/50 flex flex-col justify-center items-center p-4 animate-in fade-in duration-200"> <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md relative"> <button onClick={() => setShowSupabaseModal(false)} className="absolute top-3 right-3 text-gray-400 hover:text-gray-600"><Icon path={Icons.X} className="w-5 h-5" /></button> <h2 className="text-xl font-bold text-center mb-4">Estado Conexión</h2> <p className="text-center mb-4">{connectionStatus === 'connected' ? 'Conectado a la nube' : 'Desconectado'}</p> {connectionStatus === 'connected' && <button onClick={handleDisconnectSupabase} className="w-full bg-red-100 text-red-600 py-2 rounded font-bold">Desconectar</button>} {connectionStatus !== 'connected' && <form onSubmit={handleConnectSupabase} className="space-y-3"><input type="text" placeholder="URL" className="w-full border p-2" value={supabaseCreds.url} onChange={e => setSupabaseCreds({...supabaseCreds, url:e.target.value})} /><input type="password" placeholder="Key" className="w-full border p-2" value={supabaseCreds.key} onChange={e => setSupabaseCreds({...supabaseCreds, key:e.target.value})} /><button className="w-full bg-emerald-600 text-white py-2 rounded font-bold">Conectar</button></form>} </div> </div> )}
 
                     {showSearch && ( <div className="fixed inset-0 z-50 bg-white flex flex-col p-4 animate-in fade-in duration-200"> 
                         <div className="flex justify-between mb-4"><h2 className="text-xl font-bold">Buscador</h2><button onClick={() => setShowSearch(false)}><Icon path={Icons.X} className="w-6 h-6" /></button></div> 
@@ -1164,7 +1296,7 @@
                             ) : (
                                 <div className="bg-white p-6 rounded-xl shadow-md text-center border-2 border-emerald-100">
                                     <h4 className="text-sm font-bold text-gray-500 uppercase mb-4">{searchResults[0].date.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</h4>
-                                    {searchResults[0].status === 'DOMINGO' ? <div className="text-gray-400 flex flex-col items-center py-4"><Icon path={Icons.Coffee} className="w-16 h-16 mb-3 text-gray-300" /><span className="text-2xl font-black text-gray-400">ES DOMINGO</span></div> : (
+                                    {searchResults[0].status === 'DOMINGO' ? <div className="text-gray-400 flex flex-col items-center py-4"><Icon path={Icons.Coffee} className="w-16 h-16 mb-3 text-gray-300" /><span className="text-2xl font-black text-gray-400">ES DOMINGO</span></div> : searchResults[0].status === 'NO DISPONIBLE' ? <p className="py-4 text-sm font-bold text-slate-500">No hay datos disponibles para una o ambas collas.</p> : (
                                         <div className="flex justify-around items-center py-4">{searchResults[0].libras.map((l, idx) => (<div key={idx} className="flex flex-col items-center"><span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">{l.colla}</span><div className="bg-red-50 border border-red-100 rounded-lg p-3 flex flex-col items-center min-w-[120px]"><Icon path={Icons.Moon} className="w-8 h-8 text-red-400 mb-1" /><span className="text-lg font-black text-slate-800">{l.name}</span><span className="text-[10px] font-bold text-red-500">LIBRA</span></div></div>))}</div>
                                     )}
                                 </div>
@@ -1207,7 +1339,7 @@
                                         <div className="bg-blue-50/50 p-3 rounded-lg border border-blue-100">
                                             <label className="block text-sm font-bold text-gray-600 uppercase mb-2">Grupo Guardia</label>
                                             <div className="flex items-center gap-2">
-                                                <input type="number" className="w-20 text-center text-lg p-2 border rounded font-bold" value={tempConfig.cehorpa.guardias} onChange={(e) => setTempConfig({...tempConfig, cehorpa: {...tempConfig.cehorpa, guardias: +e.target.value}})} />
+                                                <input type="number" min="0" max="500" className="w-20 text-center text-lg p-2 border rounded font-bold" value={tempConfig.cehorpa.guardias ?? ''} onChange={(e) => setTempConfig({...tempConfig, cehorpa: {...tempConfig.cehorpa, guardias: e.target.value === '' ? '' : Number(e.target.value)}})} />
                                                 <span className="text-gray-400">pers. a las</span>
                                                 <input type="time" className="flex-1 text-center text-lg p-2 border rounded" value={tempConfig.cehorpa.horaGuardia} onChange={(e) => setTempConfig({...tempConfig, cehorpa: {...tempConfig.cehorpa, horaGuardia: e.target.value}})} />
                                             </div>
@@ -1215,7 +1347,7 @@
                                         <div className="bg-orange-50/50 p-3 rounded-lg border border-orange-100">
                                             <label className="block text-sm font-bold text-gray-600 uppercase mb-2">Grupo Madruga</label>
                                             <div className="flex items-center gap-2">
-                                                <input type="number" className="w-20 text-center text-lg p-2 border rounded font-bold" value={tempConfig.cehorpa.madrugan} onChange={(e) => setTempConfig({...tempConfig, cehorpa: {...tempConfig.cehorpa, madrugan: +e.target.value}})} />
+                                                <input type="number" min="0" max="500" className="w-20 text-center text-lg p-2 border rounded font-bold" value={tempConfig.cehorpa.madrugan ?? ''} onChange={(e) => setTempConfig({...tempConfig, cehorpa: {...tempConfig.cehorpa, madrugan: e.target.value === '' ? '' : Number(e.target.value)}})} />
                                                 <span className="text-gray-400">pers. a las</span>
                                                 <input type="time" className="flex-1 text-center text-lg p-2 border rounded" value={tempConfig.cehorpa.horaMadruga} onChange={(e) => setTempConfig({...tempConfig, cehorpa: {...tempConfig.cehorpa, horaMadruga: e.target.value}})} />
                                             </div>
@@ -1233,22 +1365,22 @@
                                     <h3 className="text-xl font-bold text-emerald-800 mb-6 border-b pb-2 flex items-center gap-2"><Icon path={Icons.Map} className="w-6 h-6" /> VARIABLES CORTIJOS</h3>
                                     <div className="mb-6 bg-emerald-50 p-3 rounded-lg flex items-center justify-between border border-emerald-100">
                                         <span className="font-bold text-emerald-900 text-sm">CAPACIDAD CORTIJOS:</span>
-                                        <input type="number" className="w-20 text-xl font-bold text-center p-1 border-2 border-emerald-500 rounded text-emerald-900" value={tempConfig.cortijos.capacidad} onChange={(e) => setTempConfig({...tempConfig, cortijos: {...tempConfig.cortijos, capacidad: +e.target.value}})} />
+                                        <input type="number" min="1" max="500" className="w-20 text-xl font-bold text-center p-1 border-2 border-emerald-500 rounded text-emerald-900" value={tempConfig.cortijos.capacidad ?? ''} onChange={(e) => setTempConfig({...tempConfig, cortijos: {...tempConfig.cortijos, capacidad: e.target.value === '' ? '' : Number(e.target.value)}})} />
                                     </div>
                                     <div className="space-y-4">
                                         <div className="bg-gray-50 p-2 rounded border flex items-center gap-2">
                                             <span className="w-24 font-bold text-gray-600 text-sm">Guardia:</span>
-                                            <input type="number" className="w-16 p-1 border rounded text-center" value={tempConfig.cortijos.guardias} onChange={(e) => setTempConfig({...tempConfig, cortijos: {...tempConfig.cortijos, guardias: +e.target.value}})} />
+                                            <input type="number" min="0" max="500" className="w-16 p-1 border rounded text-center" value={tempConfig.cortijos.guardias ?? ''} onChange={(e) => setTempConfig({...tempConfig, cortijos: {...tempConfig.cortijos, guardias: e.target.value === '' ? '' : Number(e.target.value)}})} />
                                             <input type="time" className="flex-1 p-1 border rounded text-center" value={tempConfig.cortijos.horaGuardia} onChange={(e) => setTempConfig({...tempConfig, cortijos: {...tempConfig.cortijos, horaGuardia: e.target.value}})} />
                                         </div>
                                         <div className="bg-gray-50 p-2 rounded border flex items-center gap-2">
                                             <span className="w-24 font-bold text-gray-600 text-sm">Intermedios:</span>
-                                            <input type="number" className="w-16 p-1 border rounded text-center" value={tempConfig.cortijos.intermedios} onChange={(e) => setTempConfig({...tempConfig, cortijos: {...tempConfig.cortijos, intermedios: +e.target.value}})} />
+                                            <input type="number" min="0" max="500" className="w-16 p-1 border rounded text-center" value={tempConfig.cortijos.intermedios ?? ''} onChange={(e) => setTempConfig({...tempConfig, cortijos: {...tempConfig.cortijos, intermedios: e.target.value === '' ? '' : Number(e.target.value)}})} />
                                             <input type="time" className="flex-1 p-1 border rounded text-center" value={tempConfig.cortijos.horaIntermedia} onChange={(e) => setTempConfig({...tempConfig, cortijos: {...tempConfig.cortijos, horaIntermedia: e.target.value}})} />
                                         </div>
                                         <div className="bg-gray-50 p-2 rounded border flex items-center gap-2">
                                             <span className="w-24 font-bold text-gray-600 text-sm">Madrugan:</span>
-                                            <input type="number" className="w-16 p-1 border rounded text-center" value={tempConfig.cortijos.madrugan} onChange={(e) => setTempConfig({...tempConfig, cortijos: {...tempConfig.cortijos, madrugan: +e.target.value}})} />
+                                            <input type="number" min="0" max="500" className="w-16 p-1 border rounded text-center" value={tempConfig.cortijos.madrugan ?? ''} onChange={(e) => setTempConfig({...tempConfig, cortijos: {...tempConfig.cortijos, madrugan: e.target.value === '' ? '' : Number(e.target.value)}})} />
                                             <input type="time" className="flex-1 p-1 border rounded text-center" value={tempConfig.cortijos.horaMadruga} onChange={(e) => setTempConfig({...tempConfig, cortijos: {...tempConfig.cortijos, horaMadruga: e.target.value}})} />
                                         </div>
                                         <div className="bg-blue-50 p-2 rounded border flex items-center gap-2">
@@ -1301,7 +1433,7 @@
                                     {verdes.length === 0 && <p className="text-center text-gray-400 italic text-xs">No hay personal verde configurado.</p>}
                                 </div>
                             </div>
-                            <button onClick={saveSettingsToCloud} className="w-full bg-green-600 text-white py-4 rounded-xl font-bold">GUARDAR CONFIGURACIÓN EN LA NUBE</button>
+                            <button onClick={saveSettingsToCloud} className="w-full bg-green-600 text-white py-4 rounded-xl font-bold">GUARDAR CONFIGURACIÓN Y PUNTO DE PARTIDA</button>
                         </div> 
                     </div> )}
 
