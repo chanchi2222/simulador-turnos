@@ -652,7 +652,7 @@
             const [modalConfig, setModalConfig] = useState({ show: false, title: '', message: '', onConfirm: null, isAlert: false });
 
             const activeCollaData = collasData[activeColla] || { names: [], verdes: [], refData: {}, absences: [] };
-            const names = (activeCollaData.names && activeCollaData.names.length > 0) ? activeCollaData.names : (activeColla === '1' ? INITIAL_NAMES_COLLA1 : INITIAL_NAMES_COLLA2);
+            const names = Array.isArray(activeCollaData.names) ? activeCollaData.names : (activeColla === '1' ? INITIAL_NAMES_COLLA1 : INITIAL_NAMES_COLLA2);
             const verdes = activeCollaData.verdes || [];
             const refData = (activeCollaData.refData && activeCollaData.refData.dateString) ? activeCollaData.refData : (activeColla === '1' ? INITIAL_REF_DATA_COLLA1 : INITIAL_REF_DATA_COLLA2);
             const absences = activeCollaData.absences || []; 
@@ -794,7 +794,7 @@
                     const loaded = loadedCollas && loadedCollas[key];
                     if (loaded) {
                         safeCollas[key] = {
-                            names: Array.isArray(loaded.names) && loaded.names.length > 0 ? loaded.names : safeCollas[key].names,
+                            names: Array.isArray(loaded.names) ? loaded.names : safeCollas[key].names,
                             verdes: Array.isArray(loaded.verdes) ? loaded.verdes : [],
                             refData: loaded.refData || safeCollas[key].refData,
                             absences: Array.isArray(loaded.absences) ? loaded.absences : []
@@ -806,8 +806,8 @@
 
             const saveAllData = async (nextCollasData = collasData, nextConfig = globalConfig) => {
                 const finalCollas = {
-                    '1': { ...nextCollasData['1'], names: nextCollasData['1'].names.length ? nextCollasData['1'].names : INITIAL_NAMES_COLLA1 },
-                    '2': { ...nextCollasData['2'], names: nextCollasData['2'].names.length ? nextCollasData['2'].names : INITIAL_NAMES_COLLA2 }
+                    '1': { ...nextCollasData['1'], names: Array.isArray(nextCollasData['1'].names) ? nextCollasData['1'].names : INITIAL_NAMES_COLLA1 },
+                    '2': { ...nextCollasData['2'], names: Array.isArray(nextCollasData['2'].names) ? nextCollasData['2'].names : INITIAL_NAMES_COLLA2 }
                 };
                 const dataToSave = { collas: finalCollas, config: nextConfig };
                 setCollasData(finalCollas);
@@ -875,10 +875,19 @@
                     title: 'Eliminar Persona',
                     message: `¿Seguro que quieres eliminar a ${names[idx]}?`,
                     isAlert: false,
-                    onConfirm: () => {
+                    onConfirm: async () => {
+                        const removedName = names[idx];
                         const updatedNames = names.filter((_, i) => i !== idx); 
-                        updateActiveCollaData({ names: updatedNames });
+                        const refData = collasData[activeColla].refData || (activeColla === '1' ? INITIAL_REF_DATA_COLLA1 : INITIAL_REF_DATA_COLLA2);
+                        const updatedRefData = refData.firstGuardName === removedName
+                            ? { ...refData, firstGuardName: updatedNames[0] || '' }
+                            : refData;
                         setModalConfig(prev => ({...prev, show: false}));
+                        await updateActiveCollaData({
+                            names: updatedNames,
+                            refData: updatedRefData,
+                            absences: (collasData[activeColla].absences || []).filter(absence => absence.name !== removedName)
+                        });
                     }
                 });
             };
@@ -914,9 +923,16 @@
             const removeVerde = (id) => { 
                 setModalConfig({
                     show: true, title: 'Eliminar Verde', message: '¿Eliminar a este personal especial?', isAlert: false,
-                    onConfirm: () => {
-                        const updatedVerdes = verdes.filter(v => v.id !== id); updateActiveCollaData({ verdes: updatedVerdes });
+                    onConfirm: async () => {
+                        const removedVerde = verdes.find(v => v.id === id);
+                        const updatedVerdes = verdes.filter(v => v.id !== id);
                         setModalConfig(prev => ({...prev, show: false}));
+                        await updateActiveCollaData({
+                            verdes: updatedVerdes,
+                            absences: removedVerde
+                                ? (collasData[activeColla].absences || []).filter(absence => absence.name !== removedVerde.name)
+                                : collasData[activeColla].absences || []
+                        });
                     }
                 });
             };
@@ -1013,7 +1029,7 @@
                 if (!tempRefData || !parseLocalDate(tempRefData.dateString)) {
                     return showMessage('Fecha de partida no válida', 'Selecciona una fecha válida para el punto de partida.');
                 }
-                if (!names.includes(tempRefData.firstGuardName)) {
+                if (names.length > 0 && !names.includes(tempRefData.firstGuardName)) {
                     return showMessage('Primer guardia no válido', 'Selecciona como primer guardia a una persona que pertenezca a esta colla.');
                 }
                 if (!['CORTIJOS', 'CEHORPA'].includes(tempRefData.center)) {
@@ -1438,7 +1454,9 @@
                     </div> )}
 
                     <main className="max-w-lg mx-auto p-1.5 flex-1 flex flex-col w-full">
-                        {viewMode === 'daily' 
+                        {names.length === 0
+                            ? <p className="m-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-center text-sm font-semibold text-amber-800">Esta colla no tiene personal configurado. Añade personas desde Configuración.</p>
+                            : viewMode === 'daily'
                             ? <DailyView simulation={simulation} />
                             : <WeeklyView weekData={weekData} names={names} verdes={verdes} />
                         }
