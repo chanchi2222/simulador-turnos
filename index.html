@@ -36,7 +36,7 @@
 
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
-        const { formatLocalDate, parseLocalDate, getMonday, differenceInCalendarDays, getInclusivePeriodEndDate, getVerdeSchedule, calculateRotationHeadIndex, validateConfig, normalizeConfig } = window.SimulatorCore;
+        const { formatLocalDate, parseLocalDate, getMonday, getInclusivePeriodEndDate, calculateSimulation, validateConfig, validateDataIntegrity, recordDataChange, undoLastDataChange, normalizeConfig } = window.SimulatorCore;
 
         // ==========================================
         // 1. CONSTANTES, ICONOS Y HELPERS
@@ -76,291 +76,6 @@
             Swap: <><path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/></>,
             Bandage: <><path d="M14 12a2 2 0 1 0 4 0 2 2 0 0 0-4 0"/><path d="m10.24 3.96 8.8 8.8a3 3 0 0 1 0 4.24l-4.24 4.25a3 3 0 0 1-4.24 0l-8.8-8.8a3 3 0 0 1 0-4.25l4.25-4.24a3 3 0 0 1 4.24 0Z"/><path d="m18 10-8 8"/></>,
             Leaf: <><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/></>
-        };
-
-        // ==========================================
-        // 3. MOTOR DE LÓGICA (Funciones Puras)
-        // ==========================================
-        
-        // LÓGICA CLAVE: ASIGNAR ETIQUETAS SOLO A NORMALES (Desde el principio)
-        const assignLabelsToNormals = (peopleList, labelsQueue) => {
-            let labelIndex = 0;
-            return peopleList.map(p => {
-                if (p.isVerde) return p; 
-                if (labelIndex < labelsQueue.length) {
-                    const assignedLabel = labelsQueue[labelIndex];
-                    labelIndex++;
-                    return { ...p, specialLabel: assignedLabel };
-                }
-                return p;
-            });
-        };
-
-        const calculateSimulation = (targetDate, targetCollaId, collasData, config) => {
-            const cData = collasData[targetCollaId];
-            if (!cData || !cData.names || cData.names.length === 0) return null; 
-            
-            const cNames = cData.names;
-            const cVerdes = cData.verdes || [];
-            const cRefData = cData.refData || (targetCollaId === '1' ? INITIAL_REF_DATA_COLLA1 : INITIAL_REF_DATA_COLLA2);
-            const cAbsencesList = cData.absences || [];
-            const safeTargetDate = new Date(targetDate);
-            safeTargetDate.setHours(0, 0, 0, 0);
-            const dateStr = formatLocalDate(safeTargetDate);
-
-            const isAbsent = (pName, dStr) => {
-                return cAbsencesList.find(a => {
-                    if (a.name !== pName) return false;
-                    const activeStart = a.start;
-                    const activeEnd = a.end ? a.end : '9999-12-31';
-                    return dStr >= activeStart && dStr <= activeEnd;
-                });
-            };
-
-            const dayOfWeek = safeTargetDate.getDay();
-            if (dayOfWeek === 0) return { isSunday: true, date: targetDate };
-
-            const refDateObj = parseLocalDate(cRefData.dateString || "2025-12-06")
-                || parseLocalDate("2025-12-06");
-            const refMonday = getMonday(refDateObj);
-            const targetMonday = getMonday(safeTargetDate);
-            const weeksPassed = Math.round(differenceInCalendarDays(refMonday, targetMonday) / 7);
-            const CENTERS = ['CORTIJOS', 'CEHORPA'];
-            const refCenterIndex = cRefData.center === 'CORTIJOS' ? 0 : 1;
-            const refDayOfWeekIndex = (refDateObj.getDay() + 6) % 7; 
-            const refWeekParity = ((refCenterIndex - refDayOfWeekIndex) % 2 + 2) % 2;
-            const targetWeekParity = ((refWeekParity + weeksPassed) % 2 + 2) % 2;
-            const targetDayIndex = (dayOfWeek + 6) % 7; 
-            const targetCenterIndex = (targetWeekParity + targetDayIndex) % 2;
-            let currentCenter = CENTERS[targetCenterIndex];
-
-            // --- LÓGICA DE ROTACIÓN "CORREACTURNO" ---
-            const targetTime = safeTargetDate;
-            const headStartIndex = calculateRotationHeadIndex({
-                referenceDate: refDateObj,
-                targetDate: targetTime,
-                names: cNames,
-                firstGuardName: cRefData.firstGuardName,
-                absences: cAbsencesList
-            });
-
-            const absentPeople = [];
-            const activePeople = [];
-            for (let i = 0; i < cNames.length; i++) {
-                const name = cNames[(headStartIndex + i) % cNames.length];
-                const abs = isAbsent(name, dateStr);
-                if (abs) { 
-                    absentPeople.push({ name, status: abs.type, isVerde: false }); 
-                } else { 
-                    activePeople.push({ name, isVerde: false }); 
-                }
-            }
-
-            let libraName = "N/A";
-            if (activePeople.length > 0) {
-                const libraPerson = activePeople.pop(); 
-                libraName = libraPerson.name;
-            }
-            
-            let cortijosList, cehorpaList;
-            if (currentCenter === 'CORTIJOS') {
-                cortijosList = activePeople.slice(0, config.cortijos.capacidad);
-                cehorpaList = activePeople.slice(config.cortijos.capacidad);
-            } else {
-                cortijosList = [];
-                cehorpaList = activePeople; 
-            }
-
-            // --- LÓGICA VERDES MEJORADA ---
-            const activeVerdesGuardia = [];
-            const activeVerdesMadruga = [];
-            const remainingVerdesList = [];
-
-            cVerdes.forEach(v => {
-                const schedule = getVerdeSchedule(
-                    { ...v, startDate: v.startDate || formatLocalDate(refDateObj) },
-                    targetTime,
-                    currentCenter
-                );
-                if (!schedule) return;
-                const { effectiveCenter } = schedule;
-
-                const abs = isAbsent(v.name, dateStr);
-                if (abs) { 
-                    absentPeople.push({ name: v.name, status: abs.type, isVerde: true }); 
-                    return; 
-                }
-
-                const centerOk = (effectiveCenter === currentCenter);
-                const assigned = schedule.assigned;
-                if (schedule.role === 'GUARDIA' && centerOk) {
-                    activeVerdesGuardia.push({ ...v, effectiveCenter });
-                } else if (schedule.role === 'MADRUGA' && centerOk) {
-                    if (!activeVerdesGuardia.find(g => g.name === v.name)) {
-                        activeVerdesMadruga.push({ ...v, effectiveCenter });
-                    }
-                }
-
-                if (!assigned) {
-                    remainingVerdesList.push({ ...v, effectiveCenter });
-                }
-            });
-
-            // 1. REPARTO BASE CORTIJOS
-            let gNormals = cortijosList.slice(0, config.cortijos.guardias);
-            let remaining = cortijosList.slice(config.cortijos.guardias);
-            let mNormals = [];
-            let iNormals = [];
-
-            if (currentCenter === 'CORTIJOS') {
-                const madrugaCount = config.cortijos.madrugan;
-                if (remaining.length >= madrugaCount) {
-                    mNormals = remaining.slice(remaining.length - madrugaCount);
-                    iNormals = remaining.slice(0, config.cortijos.intermedios);
-                } else {
-                    mNormals = remaining;
-                    iNormals = [];
-                }
-            } else {
-                iNormals = remaining;
-            }
-            cortijosList = [];
-
-            // 2. INYECCIÓN VERDES
-            // GUARDIAS
-            activeVerdesGuardia.forEach(v => {
-                if (currentCenter === 'CEHORPA') {
-                } else {
-                    gNormals.splice(2, 0, { name: v.name, isVerde: true, roleOverride: 'GUARDIA' });
-                    while (gNormals.length > config.cortijos.guardias) {
-                        let displacedIndex = -1;
-                        for(let k = gNormals.length - 1; k >= 0; k--) {
-                            if(!gNormals[k].isVerde) {
-                                displacedIndex = k;
-                                break;
-                            }
-                        }
-                        if(displacedIndex !== -1) {
-                            const displaced = gNormals.splice(displacedIndex, 1)[0];
-                            iNormals.unshift(displaced);
-                        } else {
-                            const displaced = gNormals.pop();
-                            iNormals.unshift(displaced);
-                        }
-                    }
-                }
-            });
-
-            // MADRUGAS
-            activeVerdesMadruga.forEach(v => {
-                if (currentCenter === 'CEHORPA') {
-                } else {
-                    mNormals.unshift({ name: v.name, isVerde: true, roleOverride: 'MADRUGA' });
-                    while (mNormals.length > config.cortijos.madrugan) {
-                        let displaced = null;
-                        for (let k = 0; k < mNormals.length; k++) {
-                             if (!mNormals[k].isVerde) {
-                                 displaced = mNormals.splice(k, 1)[0];
-                                 break;
-                             }
-                        }
-                        if (displaced) iNormals.push(displaced); 
-                    }
-                }
-            });
-
-            // RESTO VERDES (Intermedios)
-            remainingVerdesList.forEach(v => {
-                if (v.effectiveCenter === 'CORTIJOS' && currentCenter === 'CORTIJOS') {
-                    iNormals.push({ name: v.name, isVerde: true, roleOverride: 'INTERMEDIO' });
-                }
-            });
-
-            const injectVerdeLegacy = (targetList, verdeName, index, role) => {
-                const item = { name: verdeName, isVerde: true, roleOverride: role };
-                if (index > targetList.length) targetList.push(item);
-                else targetList.splice(index, 0, item);
-            };
-
-            if (currentCenter === 'CEHORPA') {
-                activeVerdesGuardia.forEach(v => injectVerdeLegacy(cehorpaList, v.name, 2, 'GUARDIA'));
-                activeVerdesMadruga.forEach((v, idx) => injectVerdeLegacy(cehorpaList, v.name, config.cehorpa.guardias + idx, 'MADRUGA'));
-                remainingVerdesList.forEach(v => {
-                    if (v.effectiveCenter === 'CEHORPA') injectVerdeLegacy(cehorpaList, v.name, cehorpaList.length, 'RESTO');
-                });
-            }
-
-            const personStatus = {};
-            cNames.forEach(n => personStatus[n] = { status: 'LIBRE', time: 'L' });
-            cVerdes.forEach(v => personStatus[v.name] = { status: 'LIBRE', time: 'L' });
-            absentPeople.forEach(p => { personStatus[p.name] = { status: p.status, name: p.name, isVerde: p.isVerde }; });
-            
-            if (libraName !== "N/A") { personStatus[libraName] = { status: 'LIBRE', time: 'L' }; }
-
-            const processPerson = (p, role, time, center, rank, special, isFlejador) => {
-                let display = time.split(':')[0].replace(/^0/, '');
-                if (rank) display += `.${rank}`;
-                personStatus[p.name] = { status: 'WORK', display, ...p, center, isFlejador, special, role, rank, time };
-                return { ...p, time, role, realCenter: center, rank, isFlejador, special, status: 'WORK' };
-            };
-            
-            if (currentCenter === 'CEHORPA') {
-                remainingVerdesList.forEach(v => {
-                    if (v.effectiveCenter === 'CORTIJOS') processPerson({name: v.name, isVerde: true}, 'INTERMEDIO', config.cortijos.horaIntermedia, 'CORTIJOS');
-                });
-            }
-
-            const LABELS_CEHORPA_MADRUGA = ["AYUDA TRASPALETA", "GUITAOR", "REPONEDOR PALET"];
-            const LABELS_CORTIJOS_MADRUGA = ["PUNTO"]; 
-
-            let groups = [];
-            if (currentCenter === 'CEHORPA') {
-                const { guardias, madrugan, horaResto } = config.cehorpa;
-                const g1 = cehorpaList.slice(0, guardias).map((p, i, arr) => processPerson(p, 'GUARDIA', config.cehorpa.horaGuardia, 'CEHORPA', i + 1, false, i === arr.length - 1));
-                
-                const rawG2 = cehorpaList.slice(guardias, guardias + madrugan);
-                const labeledG2 = assignLabelsToNormals(rawG2, LABELS_CEHORPA_MADRUGA);
-
-                const g2 = labeledG2.map((p, i) => {
-                        const processed = processPerson(p, 'MADRUGA', config.cehorpa.horaMadruga, 'CEHORPA', i + 1);
-                        if (p.specialLabel) processed.specialLabel = p.specialLabel; 
-                        return processed;
-                });
-                const g3 = cehorpaList.slice(guardias + madrugan).map((p, i) => processPerson(p, 'RESTO', horaResto, 'CEHORPA'));
-                groups = [{ title: 'GUARDIA', color: 'bg-emerald-600 text-white', items: g1 }, { title: 'MADRUGAR', color: 'bg-orange-500 text-white', items: g2 }, { title: 'RESTO', color: 'bg-blue-500 text-white', items: g3 }];
-            } else {
-                const { guardias, intermedios, madrugan } = config.cortijos;
-                
-                const c_g1 = gNormals.map((p, i, arr) => processPerson(p, 'GUARDIA', config.cortijos.horaGuardia, 'CORTIJOS', i + 1, false, i === arr.length - 1));
-                
-                const c_g2 = iNormals.map((p, i) => processPerson(p, 'INTERMEDIO', config.cortijos.horaIntermedia, 'CORTIJOS', i + 1));
-                
-                // CORTIJOS: Asignar etiqueta PUNTO al ÚLTIMO normal
-                let lastNormalIndex = -1;
-                for (let k = mNormals.length - 1; k >= 0; k--) {
-                     if (!mNormals[k].isVerde) {
-                         lastNormalIndex = k;
-                         break;
-                     }
-                }
-
-                const c_g3 = mNormals.map((p, i) => {
-                    const processed = processPerson(p, 'MADRUGA', config.cortijos.horaMadruga, 'CORTIJOS', i + 1);
-                    if (i === lastNormalIndex) processed.specialLabel = "PUNTO";
-                    return processed;
-                });
-
-                const apoyo = cehorpaList.map((p, i) => processPerson(p, 'APOYO', config.cortijos.horaRestoCehorpa, 'CEHORPA'));
-                
-                groups = [
-                    { title: 'CORTIJOS - GUARDIA', color: 'bg-emerald-600 text-white', items: c_g1 },
-                    { title: 'CORTIJOS - INTERMEDIOS', color: 'bg-yellow-500 text-white', items: c_g2 },
-                    { title: 'CORTIJOS - MADRUGAR', color: 'bg-orange-500 text-white', items: c_g3 },
-                    { title: 'APOYO A CEHORPA', color: 'bg-blue-500 text-white', items: apoyo }
-                ];
-            }
-            if (absentPeople.length > 0) groups.push({ title: 'AUSENCIAS / BAJAS', color: 'bg-red-500 text-white', items: absentPeople });
-            return { isSunday: false, date: targetDate, center: currentCenter, libra: libraName, libraStatus: 'LIBRE', groups, personStatus };
         };
 
         const ConfirmationModal = ({ show, title, message, onConfirm, onCancel, isAlert }) => {
@@ -428,6 +143,8 @@
                                     <div className="text-sm font-black text-slate-800 leading-none uppercase">
                                             {viewMode === 'weekly' && weekData ? 
                                                 `${weekData[0].date.toLocaleDateString('es-ES', {day:'numeric', month:'short'})} - ${weekData[5].date.toLocaleDateString('es-ES', {day:'numeric', month:'short'})}`
+                                                : viewMode === 'monthly'
+                                                ? selectedDate.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })
                                                 : selectedDate.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' }).replace('.', '')
                                             }
                                     </div>
@@ -442,6 +159,7 @@
                         <div className="flex bg-gray-100 p-1 rounded-lg shrink-0">
                             <button onClick={() => setViewMode('daily')} className={`px-3 py-1.5 rounded-md text-[10px] font-bold transition ${viewMode === 'daily' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>DÍA</button>
                             <button onClick={() => setViewMode('weekly')} className={`px-3 py-1.5 rounded-md text-[10px] font-bold transition ${viewMode === 'weekly' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>SEMANA</button>
+                            <button onClick={() => setViewMode('monthly')} className={`px-3 py-1.5 rounded-md text-[10px] font-bold transition ${viewMode === 'monthly' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>MES</button>
                         </div>
                         <div className="w-px bg-gray-200 mx-1"></div>
                         <button onClick={onSearch} className="flex-1 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 rounded-lg flex items-center justify-center gap-2 text-[10px] font-bold transition active:scale-95"><Icon path={Icons.Search} className="w-4 h-4" /> BUSCAR</button>
@@ -589,6 +307,67 @@
             );
         };
 
+        const MonthlyView = ({ monthData, selectedDate, onSelectDate }) => {
+            if (!monthData) return null;
+            const weekDays = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
+            const monthLabel = selectedDate.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+
+            const getDayTone = (day) => {
+                if (!day) return 'bg-transparent border-transparent';
+                if (day.isSunday) return 'bg-slate-100 border-slate-200 text-slate-400';
+                return day.center === 'CORTIJOS'
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
+                    : 'bg-blue-50 border-blue-200 text-blue-950';
+            };
+
+            return (
+                <div className="mt-2 bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                    <div className="px-3 py-2 border-b bg-slate-50 flex items-center justify-between">
+                        <h2 className="text-sm font-black text-slate-800 uppercase">{monthLabel}</h2>
+                        <div className="flex items-center gap-2 text-[10px] font-bold">
+                            <span className="inline-flex items-center gap-1 text-emerald-700"><span className="w-2 h-2 rounded-full bg-emerald-500"></span>COR</span>
+                            <span className="inline-flex items-center gap-1 text-blue-700"><span className="w-2 h-2 rounded-full bg-blue-500"></span>CEH</span>
+                        </div>
+                    </div>
+                    <div className="grid grid-cols-7 bg-slate-100 border-b border-slate-200">
+                        {weekDays.map(day => <div key={day} className="py-1 text-center text-[10px] font-black text-slate-500">{day}</div>)}
+                    </div>
+                    <div className="grid grid-cols-7 gap-px bg-slate-200">
+                        {monthData.map((day, index) => (
+                            <button
+                                key={day ? formatLocalDate(day.date) : `empty-${index}`}
+                                type="button"
+                                disabled={!day}
+                                onClick={() => day && onSelectDate(day.date)}
+                                className={`min-h-[76px] p-1 text-left border flex flex-col justify-between ${getDayTone(day)} ${day ? 'hover:ring-2 hover:ring-slate-400 hover:z-10 transition' : ''}`}
+                            >
+                                {day && (
+                                    <>
+                                        <div className="flex items-start justify-between gap-1">
+                                            <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black ${day.isToday ? 'bg-slate-900 text-white' : 'bg-white/80 text-slate-800'}`}>{day.date.getDate()}</span>
+                                            {!day.isSunday && <span className={`text-[8px] font-black px-1 rounded ${day.center === 'CORTIJOS' ? 'bg-emerald-600 text-white' : 'bg-blue-600 text-white'}`}>{day.center === 'CORTIJOS' ? 'COR' : 'CEH'}</span>}
+                                        </div>
+                                        {day.isSunday ? (
+                                            <div className="text-center text-[10px] font-black text-slate-400">DOM</div>
+                                        ) : (
+                                            <div className="space-y-1">
+                                                <div className="truncate text-[10px] font-black text-red-600">{day.libra}</div>
+                                                <div className="grid grid-cols-3 gap-1 text-center">
+                                                    <span className="rounded bg-emerald-600 text-white text-[9px] font-black">{day.guardias}</span>
+                                                    <span className="rounded bg-orange-500 text-white text-[9px] font-black">{day.madrugan}</span>
+                                                    <span className={`rounded text-[9px] font-black ${day.ausencias ? 'bg-red-500 text-white' : 'bg-white/70 text-slate-400'}`}>{day.ausencias}</span>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
         const App = () => {
             const [selectedDate, setSelectedDate] = useState(new Date());
             const [activeColla, setActiveColla] = useState('1'); 
@@ -599,6 +378,12 @@
             const connectionAttemptRef = React.useRef(false);
             const localChangesPendingRef = React.useRef(localStorage.getItem('turnos_pending_sync_v1') === 'true');
             const saveQueueRef = React.useRef(Promise.resolve());
+            const importBackupInputRef = React.useRef(null);
+            const currentDataRef = React.useRef(null);
+            const changeHistoryRef = React.useRef([]);
+            const undoStackRef = React.useRef([]);
+            const [changeHistory, setChangeHistory] = useState([]);
+            const [undoStack, setUndoStack] = useState([]);
             const setLocalChangesPending = pending => {
                 localChangesPendingRef.current = pending;
                 try {
@@ -656,6 +441,20 @@
             const [tempRefData, setTempRefData] = useState(null);
             const [transferSource, setTransferSource] = useState('1');
 
+            const dataAlerts = useMemo(() => {
+                const alertCollasData = showSettings && tempRefData
+                    ? { ...collasData, [activeColla]: { ...collasData[activeColla], refData: tempRefData } }
+                    : collasData;
+                const alertConfig = showSettings && tempConfig ? tempConfig : globalConfig;
+                return validateDataIntegrity(alertCollasData, alertConfig, { collaNames: COLLA_NAMES });
+            }, [collasData, globalConfig, showSettings, tempConfig, tempRefData, activeColla]);
+            const criticalAlerts = dataAlerts.filter(alert => alert.severity === 'error');
+            const warningAlerts = dataAlerts.filter(alert => alert.severity === 'warning');
+            const alertSummary = [
+                criticalAlerts.length ? `${criticalAlerts.length} ${criticalAlerts.length === 1 ? 'error' : 'errores'}` : '',
+                warningAlerts.length ? `${warningAlerts.length} ${warningAlerts.length === 1 ? 'aviso' : 'avisos'}` : ''
+            ].filter(Boolean).join(' · ') || 'OK';
+
             const showMessage = (title, message) => setModalConfig({
                 show: true,
                 title,
@@ -663,6 +462,15 @@
                 isAlert: true,
                 onConfirm: () => setModalConfig(prev => ({ ...prev, show: false }))
             });
+
+            const applyHistoryMetadata = content => {
+                const history = Array.isArray(content && content.changeHistory) ? content.changeHistory : [];
+                const stack = Array.isArray(content && content.undoStack) ? content.undoStack : [];
+                changeHistoryRef.current = history;
+                undoStackRef.current = stack;
+                setChangeHistory(history);
+                setUndoStack(stack);
+            };
 
             useEffect(() => {
                 try {
@@ -676,6 +484,8 @@
                         if (normalized.errors.length) showMessage('Configuración inválida', 'Se han detectado valores no válidos en los datos locales. Se cargarán los valores predeterminados.');
                         else if (normalized.adjustedIntermedios) showMessage('Configuración ajustada', 'Se ha actualizado el número de intermedios para completar la capacidad de Cortijos.');
                     }
+                    currentDataRef.current = { collas: sanitizeCollas(parsed.collas), config: parsed.config || DEFAULT_CONFIG };
+                    applyHistoryMetadata(parsed);
                 } catch (error) {
                     showMessage('Error al cargar datos locales', 'No se pudieron leer los datos guardados en este navegador.');
                 }
@@ -708,6 +518,8 @@
                             const normalized = normalizeConfig(parsed.config, DEFAULT_CONFIG);
                             setGlobalConfig(normalized.config);
                         }
+                        currentDataRef.current = { collas: sanitizeCollas(parsed.collas), config: parsed.config || DEFAULT_CONFIG };
+                        applyHistoryMetadata(parsed);
                         setLocalChangesPending(false);
                     } else if (data && data.content) {
                         const content = data.content;
@@ -718,6 +530,8 @@
                             if (normalized.errors.length) showMessage('Configuración inválida', 'La configuración recibida de Supabase no es válida; se cargaron los valores predeterminados.');
                             else if (normalized.adjustedIntermedios) showMessage('Configuración ajustada', 'Se ajustó el número de intermedios para completar la capacidad de Cortijos.');
                         }
+                        currentDataRef.current = { collas: sanitizeCollas(content.collas), config: content.config || DEFAULT_CONFIG };
+                        applyHistoryMetadata(content);
                         localStorage.setItem('turnos_data_offline_v1', JSON.stringify(content));
                     } else if (savedLocal) {
                         const parsed = JSON.parse(savedLocal);
@@ -730,7 +544,14 @@
                             const normalized = normalizeConfig(parsed.config, DEFAULT_CONFIG);
                             setGlobalConfig(normalized.config);
                         }
+                        currentDataRef.current = { collas: sanitizeCollas(parsed.collas), config: parsed.config || DEFAULT_CONFIG };
+                        applyHistoryMetadata(parsed);
                         setLocalChangesPending(false);
+                    } else {
+                        currentDataRef.current = {
+                            collas: sanitizeCollas(collasData),
+                            config: globalConfig
+                        };
                     }
 
                     setSupabaseClient(client);
@@ -751,7 +572,7 @@
                 connectToSupabase();
             }, []);
 
-            const sanitizeAndSetCollas = (loadedCollas) => {
+            const sanitizeCollas = (loadedCollas) => {
                 const safeCollas = {
                     '1': { names: INITIAL_NAMES_COLLA1, verdes: [], refData: INITIAL_REF_DATA_COLLA1, absences: [] },
                     '2': { names: INITIAL_NAMES_COLLA2, verdes: [], refData: INITIAL_REF_DATA_COLLA2, absences: [] }
@@ -767,7 +588,11 @@
                         };
                     }
                 });
-                setCollasData(safeCollas);
+                return safeCollas;
+            };
+
+            const sanitizeAndSetCollas = (loadedCollas) => {
+                setCollasData(sanitizeCollas(loadedCollas));
             };
 
             const saveAllData = async (nextCollasData = collasData, nextConfig = globalConfig) => {
@@ -775,7 +600,14 @@
                     '1': { ...nextCollasData['1'], names: Array.isArray(nextCollasData['1'].names) ? nextCollasData['1'].names : INITIAL_NAMES_COLLA1 },
                     '2': { ...nextCollasData['2'], names: Array.isArray(nextCollasData['2'].names) ? nextCollasData['2'].names : INITIAL_NAMES_COLLA2 }
                 };
-                const dataToSave = { collas: finalCollas, config: nextConfig };
+                const previousData = currentDataRef.current || { collas: collasData, config: globalConfig };
+                const dataToSave = recordDataChange(
+                    { ...previousData, changeHistory: changeHistoryRef.current, undoStack: undoStackRef.current },
+                    { collas: finalCollas, config: nextConfig },
+                    { collaNames: COLLA_NAMES }
+                );
+                currentDataRef.current = { collas: finalCollas, config: nextConfig };
+                applyHistoryMetadata(dataToSave);
                 setCollasData(finalCollas);
                 setGlobalConfig(nextConfig);
                 try {
@@ -811,9 +643,143 @@
                 return saveOperation;
             };
 
+            const undoChange = async expectedChangeId => {
+                if (!supabaseClient || cloudStatus !== 'connected') {
+                    showMessage('Se necesita conexión', 'Conecta con Supabase para deshacer con seguridad y comprobar que nadie haya guardado cambios después.');
+                    return;
+                }
+                try {
+                    const { data, error } = await supabaseClient
+                        .from('shift_data')
+                        .select('content')
+                        .eq('id', 'main_config')
+                        .maybeSingle();
+                    if (error) throw error;
+                    if (!data || !data.content || !data.content.revision) {
+                        showMessage('No se puede comprobar el historial', 'No se encontró una revisión compartida. No se deshizo ningún cambio.');
+                        return;
+                    }
+
+                    const result = undoLastDataChange(data.content, expectedChangeId);
+                    if (!result.ok) {
+                        showMessage('No se deshizo el cambio', result.reason);
+                        return;
+                    }
+
+                    const { data: updated, error: updateError } = await supabaseClient
+                        .from('shift_data')
+                        .update({ content: result.content })
+                        .eq('id', 'main_config')
+                        .filter('content->>revision', 'eq', data.content.revision)
+                        .select('id')
+                        .maybeSingle();
+                    if (updateError) throw updateError;
+                    if (!updated) {
+                        showMessage('Cambios recientes detectados', 'Otra persona guardó cambios durante la operación. No se deshizo nada; vuelve a cargar la página y revisa el historial.');
+                        return;
+                    }
+
+                    const restoredCollas = sanitizeCollas(result.content.collas);
+                    const normalized = normalizeConfig(result.content.config, DEFAULT_CONFIG);
+                    currentDataRef.current = { collas: restoredCollas, config: normalized.config };
+                    applyHistoryMetadata(result.content);
+                    setCollasData(restoredCollas);
+                    setGlobalConfig(normalized.config);
+                    try {
+                        localStorage.setItem('turnos_data_offline_v1', JSON.stringify(result.content));
+                        setLocalChangesPending(false);
+                    } catch (storageError) {
+                        console.error('El deshacer se sincronizó, pero no se pudo actualizar la copia local.', storageError);
+                        showMessage('Deshecho en la nube', 'El cambio se deshizo en Supabase, pero no se pudo actualizar la copia de este dispositivo.');
+                        return;
+                    }
+                    showMessage('Cambio deshecho', 'Se restauró la versión anterior. El deshacer también aparece en el historial.');
+                } catch (error) {
+                    const reason = error && error.message ? ` Detalle: ${error.message}` : '';
+                    showMessage('No se pudo deshacer', `No se modificó el estado compartido. Comprueba la conexión e inténtalo de nuevo.${reason}`);
+                }
+            };
+
+            const requestUndoLastChange = () => {
+                const latestChange = undoStackRef.current[undoStackRef.current.length - 1];
+                if (!latestChange) {
+                    showMessage('No hay cambios que deshacer', 'Cuando se guarde una modificación, aparecerá aquí la opción para restaurarla.');
+                    return;
+                }
+                if (!supabaseClient || cloudStatus !== 'connected') {
+                    showMessage('Se necesita conexión', 'Conecta con Supabase para deshacer con seguridad y comprobar que nadie haya guardado cambios después.');
+                    return;
+                }
+                setModalConfig({
+                    show: true,
+                    title: 'Deshacer último cambio',
+                    message: `Se restaurará el estado anterior a este cambio: ${latestChange.summary}. Si alguien ya guardó otro cambio, la app cancelará la operación para protegerlo.`,
+                    isAlert: false,
+                    onConfirm: async () => {
+                        setModalConfig(prev => ({ ...prev, show: false }));
+                        await undoChange(latestChange.id);
+                    }
+                });
+            };
+
             const updateActiveCollaData = (updates) => {
                 const newCollas = { ...collasData, [activeColla]: { ...collasData[activeColla], ...updates } };
                 return saveAllData(newCollas, globalConfig);
+            };
+
+            const handleExportBackup = () => {
+                const backup = {
+                    version: 1,
+                    exportedAt: new Date().toISOString(),
+                    collas: collasData,
+                    config: globalConfig
+                };
+                const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `simulador-turnos-backup-${formatLocalDate(new Date())}.json`;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                URL.revokeObjectURL(url);
+            };
+
+            const handleImportBackup = (event) => {
+                const file = event.target.files && event.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = async () => {
+                    try {
+                        const parsed = JSON.parse(reader.result);
+                        const content = parsed && parsed.collas ? parsed : parsed && parsed.content;
+                        if (!content || !content.collas || !content.config) {
+                            throw new Error('El archivo no tiene el formato esperado.');
+                        }
+                        const normalized = normalizeConfig(content.config, DEFAULT_CONFIG);
+                        if (normalized.errors.length) {
+                            return showMessage('Copia no válida', normalized.errors.join(' '));
+                        }
+                        const safeCollas = sanitizeCollas(content.collas);
+                        const saved = await saveAllData(safeCollas, normalized.config);
+                        if (saved) {
+                            setShowSettings(false);
+                            showMessage('Copia restaurada', normalized.adjustedIntermedios
+                                ? 'La copia se importó y se ajustaron los intermedios de Cortijos para cuadrar la capacidad.'
+                                : 'La copia se importó correctamente.');
+                        }
+                    } catch (error) {
+                        const reason = error && error.message ? ` ${error.message}` : '';
+                        showMessage('No se pudo importar', `Selecciona una copia JSON válida.${reason}`);
+                    } finally {
+                        event.target.value = '';
+                    }
+                };
+                reader.onerror = () => {
+                    showMessage('No se pudo leer', 'El navegador no pudo leer el archivo seleccionado.');
+                    event.target.value = '';
+                };
+                reader.readAsText(file);
             };
 
             const handleAddName = async (e) => {
@@ -1073,6 +1039,8 @@
                 setShowStats(true);
             };
 
+            const isToday = (d) => { const today = new Date(); return d.getDate() === today.getDate() && d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear(); };
+
             const weekData = useMemo(() => {
                 if (!names || !names.length) return null; 
                 const monday = getMonday(selectedDate);
@@ -1085,10 +1053,50 @@
                 return days;
             }, [selectedDate, globalConfig, collasData, activeColla, names]); 
 
-            const handlePrev = () => { const d = new Date(selectedDate); d.setDate(d.getDate() - (viewMode === 'weekly' ? 7 : 1)); setSelectedDate(d); };
-            const handleNext = () => { const d = new Date(selectedDate); d.setDate(d.getDate() + (viewMode === 'weekly' ? 7 : 1)); setSelectedDate(d); };
+            const monthData = useMemo(() => {
+                if (!names || !names.length) return null;
+                const year = selectedDate.getFullYear();
+                const month = selectedDate.getMonth();
+                const firstDay = new Date(year, month, 1);
+                const daysInMonth = new Date(year, month + 1, 0).getDate();
+                const leadingBlanks = (firstDay.getDay() + 6) % 7;
+                const cells = Array.from({ length: leadingBlanks }, () => null);
+
+                for (let day = 1; day <= daysInMonth; day++) {
+                    const date = new Date(year, month, day);
+                    const sim = calculateSimulation(date, activeColla, collasData, globalConfig);
+                    const statuses = sim && sim.personStatus ? Object.values(sim.personStatus) : [];
+                    cells.push({
+                        date,
+                        isToday: isToday(date),
+                        isSunday: Boolean(sim && sim.isSunday),
+                        center: sim && !sim.isSunday ? sim.center : '',
+                        libra: sim && !sim.isSunday ? sim.libra : '',
+                        guardias: statuses.filter(status => status.status === 'WORK' && status.role === 'GUARDIA').length,
+                        madrugan: statuses.filter(status => status.status === 'WORK' && status.role === 'MADRUGA').length,
+                        ausencias: statuses.filter(status => status.status === 'BAJA' || status.status === 'VACACIONES').length
+                    });
+                }
+
+                while (cells.length % 7 !== 0) cells.push(null);
+                return cells;
+            }, [selectedDate, globalConfig, collasData, activeColla, names]);
+
+            const handlePrev = () => {
+                const d = new Date(selectedDate);
+                if (viewMode === 'weekly') d.setDate(d.getDate() - 7);
+                else if (viewMode === 'monthly') { d.setDate(1); d.setMonth(d.getMonth() - 1); }
+                else d.setDate(d.getDate() - 1);
+                setSelectedDate(d);
+            };
+            const handleNext = () => {
+                const d = new Date(selectedDate);
+                if (viewMode === 'weekly') d.setDate(d.getDate() + 7);
+                else if (viewMode === 'monthly') { d.setDate(1); d.setMonth(d.getMonth() + 1); }
+                else d.setDate(d.getDate() + 1);
+                setSelectedDate(d);
+            };
             const handleToday = () => setSelectedDate(new Date());
-            const isToday = (d) => { const today = new Date(); return d.getDate() === today.getDate() && d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear(); };
             
             const shareText = async (text) => { window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank'); };
             const handleShare = () => { 
@@ -1115,7 +1123,7 @@
                         }); 
                     } 
                     text += `\nSimulador de Turnos`; shareText(text); 
-                } else { 
+                } else if (viewMode === 'weekly') {
                     if (!weekData) return; 
                     const weekStart = weekData[0].date.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }); 
                     const weekEnd = weekData[5].date.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }); 
@@ -1134,6 +1142,16 @@
                         text += `${line1}\n${line2}\n\n`; 
                     }); 
                     text += `Simulador de Turnos`; shareText(text); 
+                } else {
+                    if (!monthData) return;
+                    const monthLabel = selectedDate.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' }).toUpperCase();
+                    let text = `📅 *${monthLabel}* (${COLLA_NAMES[activeColla]})\n\n`;
+                    monthData.filter(Boolean).forEach(day => {
+                        const label = day.date.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric' }).replace('.', '');
+                        if (day.isSunday) text += `${label}: DOMINGO\n`;
+                        else text += `${label}: ${day.center.substring(0, 3)} | Libra ${day.libra} | G${day.guardias} M${day.madrugan} A${day.ausencias}\n`;
+                    });
+                    text += `\nSimulador de Turnos`; shareText(text);
                 } 
             };
 
@@ -1318,6 +1336,80 @@
                     {showSettings && tempConfig && ( <div className="fixed inset-0 z-[100] bg-white flex flex-col p-6 overflow-y-auto"> 
                         <div className="flex justify-between items-center mb-6"><h2 className="text-xl font-bold">Configuración ({COLLA_NAMES[activeColla]})</h2><button onClick={() => setShowSettings(false)} className="bg-slate-200 p-2 rounded"><Icon path={Icons.X} className="w-5 h-5" /></button></div> 
                         <div className="max-w-4xl mx-auto space-y-8">
+                            <div className={`rounded-xl shadow-sm border p-4 ${criticalAlerts.length ? 'bg-red-50 border-red-200' : warningAlerts.length ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`}>
+                                <div className="flex items-center justify-between gap-3 mb-3">
+                                    <h3 className={`text-sm font-black uppercase ${criticalAlerts.length ? 'text-red-800' : warningAlerts.length ? 'text-amber-800' : 'text-emerald-800'}`}>
+                                        Alertas de coherencia
+                                    </h3>
+                                    <span className={`rounded-full px-2 py-1 text-[10px] font-black ${criticalAlerts.length ? 'bg-red-600 text-white' : warningAlerts.length ? 'bg-amber-500 text-white' : 'bg-emerald-600 text-white'}`}>
+                                        {alertSummary}
+                                    </span>
+                                </div>
+                                {dataAlerts.length === 0 ? (
+                                    <p className="text-xs font-semibold text-emerald-800">No se han detectado incoherencias en personal, verdes, ausencias ni configuración.</p>
+                                ) : (
+                                    <div className="space-y-2">
+                                        {dataAlerts.slice(0, 8).map((alert, idx) => (
+                                            <div key={idx} className="flex gap-2 rounded-lg bg-white/80 border border-white px-3 py-2 text-xs">
+                                                <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-black text-white ${alert.severity === 'error' ? 'bg-red-600' : 'bg-amber-500'}`}>
+                                                    {alert.severity === 'error' ? 'ERROR' : 'AVISO'}
+                                                </span>
+                                                <div>
+                                                    <span className="font-black text-slate-700">{alert.scope}: </span>
+                                                    <span className="font-semibold text-slate-600">{alert.message}</span>
+                                                </div>
+                                            </div>
+                                        ))}
+                                        {dataAlerts.length > 8 && <p className="text-[10px] font-bold text-slate-500">Hay {dataAlerts.length - 8} alertas más. Corrige las primeras y vuelve a revisar.</p>}
+                                    </div>
+                                )}
+                            </div>
+                            <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4">
+                                <div className="mb-3 flex items-center justify-between gap-3">
+                                    <div>
+                                        <h3 className="text-sm font-black uppercase text-indigo-900">Historial de cambios</h3>
+                                        <p className="mt-1 text-[10px] font-semibold text-indigo-700">Autor no identificable porque la app funciona sin iniciar sesión.</p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={requestUndoLastChange}
+                                        disabled={!undoStack.length || cloudStatus !== 'connected'}
+                                        className="shrink-0 rounded-lg bg-indigo-700 px-3 py-2 text-[10px] font-black text-white shadow-sm hover:bg-indigo-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                                        title={cloudStatus !== 'connected' ? 'Conecta con Supabase para deshacer de forma segura' : ''}
+                                    >
+                                        DESHACER ÚLTIMO
+                                    </button>
+                                </div>
+                                {changeHistory.length ? (
+                                    <div className="max-h-64 space-y-2 overflow-y-auto">
+                                        {[...changeHistory].reverse().slice(0, 12).map(entry => (
+                                            <div key={entry.id} className="rounded-lg border border-indigo-100 bg-white px-3 py-2">
+                                                <p className="text-xs font-bold text-slate-700">{entry.summary}</p>
+                                                <p className="mt-1 text-[10px] text-slate-500">
+                                                    {entry.at && !Number.isNaN(new Date(entry.at).getTime())
+                                                        ? new Date(entry.at).toLocaleString('es-ES')
+                                                        : 'Fecha no disponible'}
+                                                    {' · '}
+                                                    {entry.actor || 'Autor no identificado'}
+                                                </p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <p className="text-xs font-semibold text-indigo-800">Aún no hay cambios registrados. Los próximos cambios guardados aparecerán aquí.</p>
+                                )}
+                            </div>
+                            <div className="bg-slate-50 rounded-xl shadow-sm border border-slate-200 p-4">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <button onClick={handleExportBackup} className="bg-white border border-slate-300 text-slate-700 py-3 rounded-lg font-bold shadow-sm hover:bg-slate-100 flex items-center justify-center gap-2">
+                                        <Icon path={Icons.Share} className="w-4 h-4" /> EXPORTAR COPIA
+                                    </button>
+                                    <button onClick={() => importBackupInputRef.current?.click()} className="bg-slate-800 text-white py-3 rounded-lg font-bold shadow-sm hover:bg-slate-700 flex items-center justify-center gap-2">
+                                        <Icon path={Icons.Plus} className="w-4 h-4" /> IMPORTAR COPIA
+                                    </button>
+                                </div>
+                                <input ref={importBackupInputRef} type="file" accept="application/json,.json" className="hidden" onChange={handleImportBackup} />
+                            </div>
                             <div className="bg-blue-50 rounded-xl shadow-sm border border-blue-200 p-6">
                                 <h3 className="text-xl font-bold text-blue-800 mb-6 border-b border-blue-200 pb-2 flex items-center gap-2"><Icon path={Icons.Swap} className="w-6 h-6" /> TRASPASO ENTRE COLLAS</h3>
                                 <div className="space-y-4">
@@ -1462,6 +1554,8 @@
                             ? <p className="m-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-center text-sm font-semibold text-amber-800">Esta colla no tiene personal configurado. Añade personas desde Configuración.</p>
                             : viewMode === 'daily'
                             ? <DailyView simulation={simulation} />
+                            : viewMode === 'monthly'
+                            ? <MonthlyView monthData={monthData} selectedDate={selectedDate} onSelectDate={(date) => { setSelectedDate(date); setViewMode('daily'); }} />
                             : <WeeklyView weekData={weekData} names={names} verdes={verdes} />
                         }
                     </main>
