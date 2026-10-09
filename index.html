@@ -29,6 +29,44 @@
             top: 0; left: 0; width: 100%; height: 100%;
             opacity: 0; cursor: pointer; z-index: 20;
         }
+        @media (max-width: 640px) {
+            body {
+                font-size: 16px;
+            }
+            body .text-xs {
+                font-size: 14px !important;
+                line-height: 1.35rem !important;
+            }
+            body .text-sm {
+                font-size: 15px !important;
+                line-height: 1.4rem !important;
+            }
+            body [class~="text-[6px]"],
+            body [class~="text-[8px]"],
+            body [class~="text-[9px]"] {
+                font-size: 10px !important;
+                line-height: 1rem !important;
+            }
+            body [class~="text-[10px]"],
+            body [class~="text-[11px]"] {
+                font-size: 12px !important;
+                line-height: 1.1rem !important;
+            }
+            body button,
+            body input,
+            body select,
+            body textarea {
+                font-size: 16px !important;
+            }
+            body button {
+                min-height: 44px;
+            }
+            body input,
+            body select,
+            body textarea {
+                min-height: 44px;
+            }
+        }
     </style>
 </head>
 <body class="bg-gray-50 text-gray-800">
