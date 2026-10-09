@@ -155,16 +155,16 @@
                         </div>
                         <button onClick={handleToday} className={`px-3 rounded-xl font-bold text-white shadow-sm flex items-center justify-center transition active:scale-95 ${isToday ? 'bg-green-300' : 'bg-green-500 hover:bg-green-600'}`} disabled={isToday}>HOY</button>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex min-w-0 gap-2">
                         <div className="flex bg-gray-100 p-1 rounded-lg shrink-0">
                             <button onClick={() => setViewMode('daily')} className={`px-3 py-1.5 rounded-md text-[10px] font-bold transition ${viewMode === 'daily' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>DÍA</button>
                             <button onClick={() => setViewMode('weekly')} className={`px-3 py-1.5 rounded-md text-[10px] font-bold transition ${viewMode === 'weekly' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>SEMANA</button>
                             <button onClick={() => setViewMode('monthly')} className={`px-3 py-1.5 rounded-md text-[10px] font-bold transition ${viewMode === 'monthly' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>MES</button>
                         </div>
                         <div className="w-px bg-gray-200 mx-1"></div>
-                        <button onClick={onSearch} className="flex-1 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 rounded-lg flex items-center justify-center gap-2 text-[10px] font-bold transition active:scale-95"><Icon path={Icons.Search} className="w-4 h-4" /> BUSCAR</button>
-                        <button onClick={onStats} className="flex-1 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 rounded-lg flex items-center justify-center gap-2 text-[10px] font-bold transition active:scale-95"><Icon path={Icons.Chart} className="w-4 h-4" /> STATS</button>
-                        <button onClick={onShare} className="flex-1 bg-green-500 text-white hover:bg-green-600 rounded-lg flex items-center justify-center gap-2 text-[10px] font-bold shadow-sm transition active:scale-95"><Icon path={Icons.Share} className="w-4 h-4" /> WHATSAPP</button>
+                        <button onClick={onSearch} aria-label="Buscar turnos" title="Buscar turnos" className="min-w-0 flex-1 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 rounded-lg flex items-center justify-center gap-0 sm:gap-2 text-[10px] font-bold transition active:scale-95"><Icon path={Icons.Search} className="w-4 h-4 shrink-0" /><span className="hidden sm:inline">BUSCAR</span></button>
+                        <button onClick={onStats} aria-label="Estadísticas" title="Estadísticas" className="min-w-0 flex-1 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 rounded-lg flex items-center justify-center gap-0 sm:gap-2 text-[10px] font-bold transition active:scale-95"><Icon path={Icons.Chart} className="w-4 h-4 shrink-0" /><span className="hidden sm:inline">STATS</span></button>
+                        <button onClick={onShare} aria-label="Compartir por WhatsApp" title="Compartir por WhatsApp" className="min-w-0 flex-1 bg-green-500 text-white hover:bg-green-600 rounded-lg flex items-center justify-center gap-0 sm:gap-2 text-[10px] font-bold shadow-sm transition active:scale-95"><Icon path={Icons.Share} className="w-4 h-4 shrink-0" /><span className="hidden sm:inline">WHATSAPP</span></button>
                     </div>
                 </div>
             </div>
@@ -378,17 +378,23 @@
             const connectionAttemptRef = React.useRef(false);
             const localChangesPendingRef = React.useRef(localStorage.getItem('turnos_pending_sync_v1') === 'true');
             const saveQueueRef = React.useRef(Promise.resolve());
+            const saveEpochRef = React.useRef(0);
+            const latestLocalDraftRef = React.useRef(null);
             const importBackupInputRef = React.useRef(null);
             const currentDataRef = React.useRef(null);
             const changeHistoryRef = React.useRef([]);
             const undoStackRef = React.useRef([]);
+            const cloudRevisionRef = React.useRef(localStorage.getItem('turnos_remote_revision_v1') || '');
             const [changeHistory, setChangeHistory] = useState([]);
             const [undoStack, setUndoStack] = useState([]);
+            const [importPreview, setImportPreview] = useState(null);
+            const [conflictBackupAvailable, setConflictBackupAvailable] = useState(Boolean(localStorage.getItem('turnos_conflict_backup_v1')));
             const setLocalChangesPending = pending => {
                 localChangesPendingRef.current = pending;
                 try {
                     if (pending) localStorage.setItem('turnos_pending_sync_v1', 'true');
                     else localStorage.removeItem('turnos_pending_sync_v1');
+                    if (pending) localStorage.setItem('turnos_remote_revision_v1', cloudRevisionRef.current);
                 } catch (error) {
                     console.error('No se pudo guardar el estado de sincronización local.', error);
                 }
@@ -412,12 +418,15 @@
             const [showSettings, setShowSettings] = useState(false);
             const [showSearch, setShowSearch] = useState(false);
             const [showStats, setShowStats] = useState(false);
+            const [configTab, setConfigTab] = useState('Personal');
             const [simulation, setSimulation] = useState(null);
             const [monthlyStats, setMonthlyStats] = useState(null);
             
-            const [searchType, setSearchType] = useState('person'); 
+            const [searchType, setSearchType] = useState('person');
             const [searchPerson, setSearchPerson] = useState("");
             const [searchDateQuery, setSearchDateQuery] = useState(formatLocalDate(new Date()));
+            const [searchStartDate, setSearchStartDate] = useState(formatLocalDate(new Date()));
+            const [searchEndDate, setSearchEndDate] = useState(formatLocalDate(new Date()));
             const [searchRange, setSearchRange] = useState(7);
             const [searchResults, setSearchResults] = useState(null);
 
@@ -509,18 +518,53 @@
                     const savedLocal = localStorage.getItem('turnos_data_offline_v1');
                     if (localChangesPendingRef.current && savedLocal) {
                         const parsed = JSON.parse(savedLocal);
-                        const { error: saveError } = await client
-                            .from('shift_data')
-                            .upsert({ id: 'main_config', content: parsed });
-                        if (saveError) throw saveError;
-                        if (parsed.collas) sanitizeAndSetCollas(parsed.collas);
-                        if (parsed.config) {
-                            const normalized = normalizeConfig(parsed.config, DEFAULT_CONFIG);
-                            setGlobalConfig(normalized.config);
+                        const remoteRevision = data && data.content ? data.content.revision || '' : '';
+                        const savedBaseRevision = localStorage.getItem('turnos_remote_revision_v1') || '';
+                        if (data && data.content && remoteRevision !== savedBaseRevision) {
+                            localStorage.setItem('turnos_conflict_backup_v1', savedLocal);
+                            setConflictBackupAvailable(true);
+                            const content = data.content;
+                            if (content.collas) sanitizeAndSetCollas(content.collas);
+                            if (content.config) {
+                                const normalized = normalizeConfig(content.config, DEFAULT_CONFIG);
+                                setGlobalConfig(normalized.config);
+                            }
+                            currentDataRef.current = { collas: sanitizeCollas(content.collas), config: content.config || DEFAULT_CONFIG };
+                            applyHistoryMetadata(content);
+                            cloudRevisionRef.current = remoteRevision;
+                            localStorage.setItem('turnos_remote_revision_v1', remoteRevision);
+                            localStorage.setItem('turnos_data_offline_v1', JSON.stringify(content));
+                            setLocalChangesPending(false);
+                            showMessage('Cambios simultáneos detectados', 'Otra persona guardó cambios mientras este dispositivo estaba sin conexión. Se ha cargado la versión de Supabase y se conservaron los cambios de este dispositivo en la copia local recuperable.');
+                        } else {
+                            if (data && data.content) {
+                                let syncQuery = client
+                                    .from('shift_data')
+                                    .update({ content: parsed })
+                                    .eq('id', 'main_config');
+                                syncQuery = savedBaseRevision
+                                    ? syncQuery.filter('content->>revision', 'eq', savedBaseRevision)
+                                    : syncQuery.is('content->>revision', null);
+                                const { data: synced, error: saveError } = await syncQuery.select('id').maybeSingle();
+                                if (saveError) throw saveError;
+                                if (!synced) throw new Error('Otra persona modificó los datos durante la sincronización. No se sobrescribieron sus cambios; vuelve a conectar para resolver el conflicto.');
+                            } else {
+                                const { error: saveError } = await client
+                                    .from('shift_data')
+                                    .upsert({ id: 'main_config', content: parsed });
+                                if (saveError) throw saveError;
+                            }
+                            if (parsed.collas) sanitizeAndSetCollas(parsed.collas);
+                            if (parsed.config) {
+                                const normalized = normalizeConfig(parsed.config, DEFAULT_CONFIG);
+                                setGlobalConfig(normalized.config);
+                            }
+                            currentDataRef.current = { collas: sanitizeCollas(parsed.collas), config: parsed.config || DEFAULT_CONFIG };
+                            cloudRevisionRef.current = parsed.revision || remoteRevision;
+                            localStorage.setItem('turnos_remote_revision_v1', cloudRevisionRef.current);
+                            applyHistoryMetadata(parsed);
+                            setLocalChangesPending(false);
                         }
-                        currentDataRef.current = { collas: sanitizeCollas(parsed.collas), config: parsed.config || DEFAULT_CONFIG };
-                        applyHistoryMetadata(parsed);
-                        setLocalChangesPending(false);
                     } else if (data && data.content) {
                         const content = data.content;
                         if (content.collas) sanitizeAndSetCollas(content.collas);
@@ -531,6 +575,8 @@
                             else if (normalized.adjustedIntermedios) showMessage('Configuración ajustada', 'Se ajustó el número de intermedios para completar la capacidad de Cortijos.');
                         }
                         currentDataRef.current = { collas: sanitizeCollas(content.collas), config: content.config || DEFAULT_CONFIG };
+                        cloudRevisionRef.current = content.revision || '';
+                        localStorage.setItem('turnos_remote_revision_v1', cloudRevisionRef.current);
                         applyHistoryMetadata(content);
                         localStorage.setItem('turnos_data_offline_v1', JSON.stringify(content));
                     } else if (savedLocal) {
@@ -545,6 +591,8 @@
                             setGlobalConfig(normalized.config);
                         }
                         currentDataRef.current = { collas: sanitizeCollas(parsed.collas), config: parsed.config || DEFAULT_CONFIG };
+                        cloudRevisionRef.current = parsed.revision || '';
+                        localStorage.setItem('turnos_remote_revision_v1', cloudRevisionRef.current);
                         applyHistoryMetadata(parsed);
                         setLocalChangesPending(false);
                     } else {
@@ -552,6 +600,7 @@
                             collas: sanitizeCollas(collasData),
                             config: globalConfig
                         };
+                        cloudRevisionRef.current = '';
                     }
 
                     setSupabaseClient(client);
@@ -595,6 +644,24 @@
                 setCollasData(sanitizeCollas(loadedCollas));
             };
 
+            const applyRemoteContent = content => {
+                const remoteCollas = sanitizeCollas(content.collas);
+                const normalized = normalizeConfig(content.config, DEFAULT_CONFIG);
+                currentDataRef.current = { collas: remoteCollas, config: normalized.config };
+                cloudRevisionRef.current = content.revision || '';
+                setCollasData(remoteCollas);
+                setGlobalConfig(normalized.config);
+                applyHistoryMetadata(content);
+                setLocalChangesPending(false);
+                try {
+                    localStorage.setItem('turnos_remote_revision_v1', cloudRevisionRef.current);
+                    localStorage.setItem('turnos_data_offline_v1', JSON.stringify(content));
+                } catch (error) {
+                    console.error('No se pudo actualizar la copia local con los datos remotos.', error);
+                    showMessage('Datos cargados con una advertencia', 'Se cargaron los datos actuales de Supabase, pero no se pudo actualizar la copia local de este dispositivo.');
+                }
+            };
+
             const saveAllData = async (nextCollasData = collasData, nextConfig = globalConfig) => {
                 const finalCollas = {
                     '1': { ...nextCollasData['1'], names: Array.isArray(nextCollasData['1'].names) ? nextCollasData['1'].names : INITIAL_NAMES_COLLA1 },
@@ -606,6 +673,7 @@
                     { collas: finalCollas, config: nextConfig },
                     { collaNames: COLLA_NAMES }
                 );
+                latestLocalDraftRef.current = dataToSave;
                 currentDataRef.current = { collas: finalCollas, config: nextConfig };
                 applyHistoryMetadata(dataToSave);
                 setCollasData(finalCollas);
@@ -623,11 +691,73 @@
                     return true;
                 }
 
+                const saveEpoch = saveEpochRef.current;
                 const saveOperation = saveQueueRef.current.then(async () => {
-                    const { error } = await supabaseClient
+                    if (saveEpoch !== saveEpochRef.current) return false;
+                    const { data: latest, error: readError } = await supabaseClient
                         .from('shift_data')
-                        .upsert({ id: 'main_config', content: dataToSave });
-                    if (error) throw error;
+                        .select('content')
+                        .eq('id', 'main_config')
+                        .maybeSingle();
+                    if (readError) throw readError;
+                    const remoteContent = latest && latest.content;
+                    if (remoteContent && (remoteContent.revision || '') !== cloudRevisionRef.current) {
+                        saveEpochRef.current += 1;
+                        const conflictDraft = latestLocalDraftRef.current || dataToSave;
+                        try {
+                            localStorage.setItem('turnos_conflict_backup_v1', JSON.stringify(conflictDraft));
+                            setConflictBackupAvailable(true);
+                        } catch (storageError) {
+                            showMessage('No se pudo conservar el borrador', 'Se detectaron cambios recientes en Supabase, pero el navegador no pudo guardar una copia local de tus cambios. No se sobrescribió la nube.');
+                            applyRemoteContent(remoteContent);
+                            return false;
+                        }
+                        applyRemoteContent(remoteContent);
+                        showMessage('Cambios simultáneos detectados', 'Otra persona guardó cambios mientras editabas. No se sobrescribió la nube: se cargó la versión más reciente y tu borrador quedó guardado en Configuración → Copias.');
+                        return false;
+                    }
+
+                    let writeQuery;
+                    if (!remoteContent) {
+                        const { error } = await supabaseClient
+                            .from('shift_data')
+                            .upsert({ id: 'main_config', content: dataToSave });
+                        if (error) throw error;
+                    } else {
+                        writeQuery = supabaseClient
+                            .from('shift_data')
+                            .update({ content: dataToSave })
+                            .eq('id', 'main_config');
+                        writeQuery = cloudRevisionRef.current
+                            ? writeQuery.filter('content->>revision', 'eq', cloudRevisionRef.current)
+                            : writeQuery.is('content->>revision', null);
+                        const { data: updated, error } = await writeQuery.select('id').maybeSingle();
+                        if (error) throw error;
+                        if (!updated) {
+                            saveEpochRef.current += 1;
+                            const conflictDraft = latestLocalDraftRef.current || dataToSave;
+                            const { data: latestAfterRace, error: latestError } = await supabaseClient
+                                .from('shift_data')
+                                .select('content')
+                                .eq('id', 'main_config')
+                                .maybeSingle();
+                            if (latestError) throw latestError;
+                            if (latestAfterRace && latestAfterRace.content) {
+                                try {
+                                    localStorage.setItem('turnos_conflict_backup_v1', JSON.stringify(conflictDraft));
+                                    setConflictBackupAvailable(true);
+                                } catch (storageError) {
+                                    console.error('No se pudo conservar el borrador tras una colisión remota.', storageError);
+                                }
+                                applyRemoteContent(latestAfterRace.content);
+                            }
+                            showMessage('Cambios recientes detectados', 'Otra persona guardó cambios justo antes que tú. No se sobrescribió la nube; revisa la versión actual y recupera tu borrador desde Configuración → Copias.');
+                            return false;
+                        }
+                    }
+                    cloudRevisionRef.current = dataToSave.revision || '';
+                    localStorage.setItem('turnos_remote_revision_v1', cloudRevisionRef.current);
+                    if (latestLocalDraftRef.current === dataToSave) latestLocalDraftRef.current = null;
                     setLocalChangesPending(false);
                     return true;
                 }).catch(error => {
@@ -682,11 +812,13 @@
                     const restoredCollas = sanitizeCollas(result.content.collas);
                     const normalized = normalizeConfig(result.content.config, DEFAULT_CONFIG);
                     currentDataRef.current = { collas: restoredCollas, config: normalized.config };
+                    cloudRevisionRef.current = result.content.revision || '';
                     applyHistoryMetadata(result.content);
                     setCollasData(restoredCollas);
                     setGlobalConfig(normalized.config);
                     try {
                         localStorage.setItem('turnos_data_offline_v1', JSON.stringify(result.content));
+                        localStorage.setItem('turnos_remote_revision_v1', cloudRevisionRef.current);
                         setLocalChangesPending(false);
                     } catch (storageError) {
                         console.error('El deshacer se sincronizó, pero no se pudo actualizar la copia local.', storageError);
@@ -734,15 +866,19 @@
                     collas: collasData,
                     config: globalConfig
                 };
-                const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+                downloadJson(backup, `simulador-turnos-backup-${formatLocalDate(new Date())}.json`);
+            };
+
+            const downloadJson = (value, filename) => {
+                const blob = new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
                 const link = document.createElement('a');
                 link.href = url;
-                link.download = `simulador-turnos-backup-${formatLocalDate(new Date())}.json`;
+                link.download = filename;
                 document.body.appendChild(link);
                 link.click();
                 link.remove();
-                URL.revokeObjectURL(url);
+                window.setTimeout(() => URL.revokeObjectURL(url), 1000);
             };
 
             const handleImportBackup = (event) => {
@@ -756,18 +892,51 @@
                         if (!content || !content.collas || !content.config) {
                             throw new Error('El archivo no tiene el formato esperado.');
                         }
+                        const missingData = ['1', '2'].flatMap(collaId => {
+                            const colla = content.collas[collaId];
+                            const label = COLLA_NAMES[collaId];
+                            if (!colla || typeof colla !== 'object') return [`Falta la colla ${label}.`];
+                            const errors = [];
+                            if (!Array.isArray(colla.names)) errors.push(`${label}: falta la lista de personal.`);
+                            if (!Array.isArray(colla.verdes)) errors.push(`${label}: faltan los datos de verdes.`);
+                            if (!Array.isArray(colla.absences)) errors.push(`${label}: faltan los datos de ausencias.`);
+                            if (!colla.refData || typeof colla.refData !== 'object') {
+                                errors.push(`${label}: falta el punto de partida.`);
+                            } else {
+                                if (!parseLocalDate(colla.refData.dateString)) errors.push(`${label}: la fecha del punto de partida no es válida.`);
+                                if (!['CORTIJOS', 'CEHORPA'].includes(colla.refData.center)) errors.push(`${label}: falta un centro inicial válido.`);
+                                if (colla.names && colla.names.length && !colla.names.includes(colla.refData.firstGuardName)) {
+                                    errors.push(`${label}: el primer guardia no está en la lista de personal.`);
+                                }
+                            }
+                            return errors;
+                        });
+                        if (missingData.length) {
+                            throw new Error(missingData.join(' '));
+                        }
                         const normalized = normalizeConfig(content.config, DEFAULT_CONFIG);
                         if (normalized.errors.length) {
                             return showMessage('Copia no válida', normalized.errors.join(' '));
                         }
                         const safeCollas = sanitizeCollas(content.collas);
-                        const saved = await saveAllData(safeCollas, normalized.config);
-                        if (saved) {
-                            setShowSettings(false);
-                            showMessage('Copia restaurada', normalized.adjustedIntermedios
-                                ? 'La copia se importó y se ajustaron los intermedios de Cortijos para cuadrar la capacidad.'
-                                : 'La copia se importó correctamente.');
+                        const integrityErrors = validateDataIntegrity(safeCollas, normalized.config, { collaNames: COLLA_NAMES })
+                            .filter(problem => problem.severity === 'error');
+                        if (integrityErrors.length) {
+                            throw new Error(integrityErrors.map(problem => `${problem.scope}: ${problem.message}`).join(' '));
                         }
+                        const counts = ['1', '2'].map(collaId => ({
+                            name: COLLA_NAMES[collaId],
+                            people: safeCollas[collaId].names.length,
+                            verdes: safeCollas[collaId].verdes.length,
+                            absences: safeCollas[collaId].absences.length
+                        }));
+                        setImportPreview({
+                            name: file.name,
+                            collas: safeCollas,
+                            config: normalized.config,
+                            adjustedIntermedios: normalized.adjustedIntermedios,
+                            counts
+                        });
                     } catch (error) {
                         const reason = error && error.message ? ` ${error.message}` : '';
                         showMessage('No se pudo importar', `Selecciona una copia JSON válida.${reason}`);
@@ -780,6 +949,50 @@
                     event.target.value = '';
                 };
                 reader.readAsText(file);
+            };
+
+            const confirmImportBackup = async () => {
+                if (!importPreview) return;
+                const safetyBackup = {
+                    version: 1,
+                    exportedAt: new Date().toISOString(),
+                    reason: 'Copia automática antes de importar',
+                    collas: collasData,
+                    config: globalConfig
+                };
+                try {
+                    localStorage.setItem('turnos_pre_import_backup_v1', JSON.stringify(safetyBackup));
+                } catch (error) {
+                    showMessage('No se pudo crear la copia de seguridad', 'La importación se canceló para no reemplazar tus datos sin una copia previa. Libera espacio del navegador e inténtalo de nuevo.');
+                    return;
+                }
+                try {
+                    downloadJson(safetyBackup, `simulador-turnos-antes-de-importar-${formatLocalDate(new Date())}.json`);
+                } catch (error) {
+                    console.error('La copia previa quedó en el almacenamiento local, pero no se pudo descargar como archivo.', error);
+                }
+                const saved = await saveAllData(importPreview.collas, importPreview.config);
+                if (saved) {
+                    const adjusted = importPreview.adjustedIntermedios;
+                    setImportPreview(null);
+                    setShowSettings(false);
+                    showMessage('Copia restaurada', `Se creó una copia automática antes de importar. ${adjusted
+                        ? 'La copia se importó y se ajustaron los intermedios de Cortijos para cuadrar la capacidad.'
+                        : 'La copia se importó correctamente.'}`);
+                }
+            };
+
+            const exportConflictBackup = () => {
+                try {
+                    const savedDraft = localStorage.getItem('turnos_conflict_backup_v1');
+                    if (!savedDraft) {
+                        setConflictBackupAvailable(false);
+                        return showMessage('No hay borrador pendiente', 'No se encontró una copia local de cambios en conflicto.');
+                    }
+                    downloadJson(JSON.parse(savedDraft), `simulador-turnos-borrador-conflicto-${formatLocalDate(new Date())}.json`);
+                } catch (error) {
+                    showMessage('No se pudo exportar el borrador', 'La copia local de los cambios en conflicto no se pudo leer o descargar.');
+                }
             };
 
             const handleAddName = async (e) => {
@@ -1156,73 +1369,122 @@
             };
 
             const performSearch = () => {
-                if(searchType === 'person') {
+                if (['person', 'guardias', 'madrugadas', 'libres'].includes(searchType)) {
                     if (!searchPerson) return showMessage('Falta la persona', 'Selecciona a una persona antes de buscar.');
-                    let results = [];
-                    let iterDate = new Date(selectedDate);
-                    for (let i = 0; i < searchRange; i++) {
-                        const sim = calculateSimulation(new Date(iterDate), activeColla, collasData, globalConfig);
-                        let d = { date: new Date(iterDate), status: 'DESCONOCIDO', details: null };
-                        if (!sim) d.status = 'NO DISPONIBLE';
-                        else if (sim.isSunday) d.status = 'DOMINGO';
-                        else {
-                             const pStatus = sim.personStatus[searchPerson];
-                             if(pStatus) {
-                                 if(pStatus.status === 'LIBRE') d.status = 'LIBRA';
-                                 else if (pStatus.status === 'BAJA') { d.status = 'BAJA'; d.details = pStatus; }
-                                 else if (pStatus.status === 'VACACIONES') { d.status = 'VACACIONES'; d.details = pStatus; }
-                                 else if (pStatus.status === 'WORK') { d.status = 'TRABAJA'; d.details = pStatus; }
-                             } else { d.status = 'NO ENCONTRADO'; }
-                        }
-                        results.push(d); iterDate.setDate(iterDate.getDate() + 1);
-                    }
-                    setSearchResults(results);
-                } else if(searchType === 'guardias_libres') {
-                    if (!searchPerson) return showMessage('Falta la persona', 'Selecciona a una persona antes de buscar.');
-                    let results = [];
-                    let iterDate = new Date(selectedDate);
-                    let foundCount = 0;
-                    for (let i = 0; i < 120; i++) {
-                        const sim = calculateSimulation(new Date(iterDate), activeColla, collasData, globalConfig);
-                        if (sim && !sim.isSunday) {
-                            const pStatus = sim.personStatus[searchPerson];
-                            if (pStatus) {
-                                if (pStatus.status === 'LIBRE') {
-                                    results.push({ date: new Date(iterDate), type: 'LIBRE', details: pStatus });
-                                    foundCount++;
-                                } else if (pStatus.status === 'WORK' && pStatus.role === 'GUARDIA' && pStatus.rank === 1) {
-                                    results.push({ date: new Date(iterDate), type: 'GUARDIA', center: pStatus.center, details: pStatus });
-                                    foundCount++;
-                                }
+                    const results = [];
+                    const iterDate = new Date(selectedDate);
+                    const isEventSearch = searchType !== 'person';
+                    const maxDays = isEventSearch ? 366 : searchRange;
+                    for (let i = 0; i < maxDays; i++) {
+                        const date = new Date(iterDate);
+                        const sim = calculateSimulation(date, activeColla, collasData, globalConfig);
+                        const personStatus = sim && !sim.isSunday ? sim.personStatus[searchPerson] : null;
+                        if (!isEventSearch) {
+                            let status = 'DESCONOCIDO';
+                            if (!sim) status = 'NO DISPONIBLE';
+                            else if (sim.isSunday) status = 'DOMINGO';
+                            else if (!personStatus) status = 'NO ENCONTRADO';
+                            else if (personStatus.status === 'LIBRE') status = 'LIBRA';
+                            else if (['BAJA', 'VACACIONES'].includes(personStatus.status)) status = personStatus.status;
+                            else if (personStatus.status === 'WORK') status = 'TRABAJA';
+                            results.push({ date, status, details: personStatus });
+                        } else if (personStatus) {
+                            const isMatchingEvent = searchType === 'libres'
+                                ? personStatus.status === 'LIBRE'
+                                : personStatus.status === 'WORK' && personStatus.role === (searchType === 'guardias' ? 'GUARDIA' : 'MADRUGA');
+                            if (isMatchingEvent) {
+                                results.push({
+                                    date,
+                                    type: searchType === 'libres' ? 'LIBRE' : searchType === 'guardias' ? 'GUARDIA' : 'MADRUGA',
+                                    center: personStatus.center || '',
+                                    details: personStatus
+                                });
                             }
                         }
                         iterDate.setDate(iterDate.getDate() + 1);
-                        if (foundCount >= 10) break; 
+                        if (isEventSearch && results.length >= 10) break;
                     }
                     setSearchResults(results);
                 } else {
-                    const target = parseLocalDate(searchDateQuery);
-                    if (!target) return showMessage('Fecha no válida', 'Selecciona una fecha válida para consultar las libras.');
-                    const sim1 = calculateSimulation(target, '1', collasData, globalConfig);
-                    const sim2 = calculateSimulation(target, '2', collasData, globalConfig);
-                    let res = { date: target, status: 'OK', libras: [] };
-                    if ((sim1 && sim1.isSunday) || (sim2 && sim2.isSunday)) res.status = 'DOMINGO';
-                    else if (sim1 && sim2) {
-                        res.libras = [
-                            { colla: 'RAYO', name: sim1.libra, status: sim1.libraStatus },
-                            { colla: 'MIGUEL SEXI', name: sim2.libra, status: sim2.libraStatus }
-                        ];
-                    } else {
-                        res.status = 'NO DISPONIBLE';
+                    const start = parseLocalDate(searchType === 'date' ? searchDateQuery : searchStartDate);
+                    if (!start) return showMessage('Fecha no válida', 'Selecciona una fecha inicial válida.');
+                    if (searchType === 'date') {
+                        const sim1 = calculateSimulation(start, '1', collasData, globalConfig);
+                        const sim2 = calculateSimulation(start, '2', collasData, globalConfig);
+                        let result = { date: start, status: 'OK', libras: [] };
+                        if ((sim1 && sim1.isSunday) || (sim2 && sim2.isSunday)) result.status = 'DOMINGO';
+                        else if (sim1 && sim2) {
+                            result.libras = [
+                                { colla: 'RAYO', name: sim1.libra, status: sim1.libraStatus },
+                                { colla: 'MIGUEL SEXI', name: sim2.libra, status: sim2.libraStatus }
+                            ];
+                        } else result.status = 'NO DISPONIBLE';
+                        setSearchResults([result]);
+                        return;
                     }
-                    setSearchResults([res]);
+
+                    const end = parseLocalDate(searchEndDate);
+                    if (!end || end < start) return showMessage('Rango no válido', 'La fecha final debe ser válida y no anterior a la fecha inicial.');
+                    const totalDays = Math.round((Date.UTC(end.getFullYear(), end.getMonth(), end.getDate()) - Date.UTC(start.getFullYear(), start.getMonth(), start.getDate())) / 86400000) + 1;
+                    if (totalDays > 366) return showMessage('Rango demasiado largo', 'El buscador admite rangos de hasta 366 días.');
+                    const results = [];
+                    const date = new Date(start);
+                    for (let i = 0; i < totalDays; i++) {
+                        const sims = ['1', '2'].map(collaId => calculateSimulation(new Date(date), collaId, collasData, globalConfig));
+                        const isSunday = sims.some(sim => sim && sim.isSunday);
+                        results.push({
+                            date: new Date(date),
+                            status: isSunday ? 'DOMINGO' : sims.every(Boolean) ? 'OK' : 'NO DISPONIBLE',
+                            libres: isSunday ? [] : sims.flatMap((sim, index) => sim
+                                ? [{ colla: COLLA_NAMES[index === 0 ? '1' : '2'], name: sim.libra }]
+                                : [])
+                        });
+                        date.setDate(date.getDate() + 1);
+                    }
+                    setSearchResults(results);
                 }
+            };
+
+            const handleExportSearchResults = () => {
+                if (!searchResults || !searchResults.length) return showMessage('Sin resultados', 'Realiza una búsqueda antes de exportar.');
+                const rows = [['Fecha', 'Colla', 'Persona', 'Resultado', 'Centro', 'Hora']];
+                const addRow = (date, colla, person, result, center = '', time = '') => {
+                    rows.push([
+                        formatLocalDate(date),
+                        colla,
+                        person || '',
+                        result || '',
+                        center || '',
+                        time || ''
+                    ]);
+                };
+                if (searchType === 'person') {
+                    searchResults.forEach(item => addRow(item.date, COLLA_NAMES[activeColla], searchPerson, item.status, item.details?.center, item.details?.time));
+                } else if (['guardias', 'madrugadas', 'libres'].includes(searchType)) {
+                    searchResults.forEach(item => addRow(item.date, COLLA_NAMES[activeColla], searchPerson, item.type, item.center, item.details?.time));
+                } else if (searchType === 'date') {
+                    searchResults.forEach(item => item.libras.forEach(libra => addRow(item.date, libra.colla, libra.name, 'LIBRA')));
+                } else {
+                    searchResults.forEach(item => {
+                        if (item.status !== 'OK') addRow(item.date, '', '', item.status);
+                        item.libres.forEach(libra => addRow(item.date, libra.colla, libra.name, 'LIBRA'));
+                    });
+                }
+                const csv = `\uFEFF${rows.map(row => row.map(value => `"${String(value).replaceAll('"', '""')}"`).join(';')).join('\r\n')}`;
+                const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `busqueda-turnos-${formatLocalDate(new Date())}.csv`;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                window.setTimeout(() => URL.revokeObjectURL(url), 1000);
             };
 
             // RENDER
             return (
                 <div className="min-h-screen bg-gray-50 text-gray-800 font-sans text-xs flex flex-col">
-                    <Header activeColla={activeColla} setActiveColla={setActiveColla} cloudStatus={cloudStatus} cloudError={cloudError} onCloudRetry={connectToSupabase} onSettingsClick={() => setShowSettings(true)} />
+                    <Header activeColla={activeColla} setActiveColla={setActiveColla} cloudStatus={cloudStatus} cloudError={cloudError} onCloudRetry={connectToSupabase} onSettingsClick={() => { setConfigTab('Personal'); setShowSettings(true); }} />
                     
                     <ControlBar 
                         selectedDate={selectedDate} setSelectedDate={setSelectedDate} 
@@ -1242,6 +1504,31 @@
                         onCancel={() => setModalConfig(prev => ({ ...prev, show: false }))}
                         isAlert={modalConfig.isAlert}
                     />
+
+                    {importPreview && (
+                        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 p-4">
+                            <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-5 shadow-2xl">
+                                <h2 className="text-lg font-black text-slate-800">Revisar copia antes de importar</h2>
+                                <p className="mt-1 break-all text-xs text-slate-500">{importPreview.name}</p>
+                                <div className="mt-4 space-y-2">
+                                    {importPreview.counts.map(item => (
+                                        <div key={item.name} className="rounded-lg border bg-slate-50 p-3">
+                                            <p className="text-sm font-black text-slate-700">{item.name}</p>
+                                            <p className="mt-1 text-xs text-slate-600">{item.people} personas · {item.verdes} verdes · {item.absences} ausencias</p>
+                                        </div>
+                                    ))}
+                                </div>
+                                <p className="mt-3 rounded-lg bg-amber-50 p-3 text-xs font-semibold text-amber-900">
+                                    Se creará y descargará una copia de seguridad del estado actual antes de reemplazarlo.
+                                    {importPreview.adjustedIntermedios && ' Al importar se ajustará la configuración de intermedios de Cortijos para cuadrar la capacidad.'}
+                                </p>
+                                <div className="mt-5 flex gap-2">
+                                    <button onClick={() => setImportPreview(null)} className="flex-1 rounded-lg bg-slate-100 py-3 text-xs font-bold text-slate-700">CANCELAR</button>
+                                    <button onClick={confirmImportBackup} className="flex-1 rounded-lg bg-emerald-600 py-3 text-xs font-bold text-white">CREAR COPIA E IMPORTAR</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     {/* Modals & Overlays */}
                     {showStats && monthlyStats && (
@@ -1265,21 +1552,35 @@
                     {showSearch && ( <div className="fixed inset-0 z-50 bg-white flex flex-col p-4 animate-in fade-in duration-200"> 
                         <div className="flex justify-between mb-4"><h2 className="text-xl font-bold">Buscador</h2><button onClick={() => setShowSearch(false)}><Icon path={Icons.X} className="w-6 h-6" /></button></div> 
                         <div className="bg-white p-2 rounded-lg shadow-sm border border-gray-200 mb-3">
-                            <div className="flex border-b mb-3">
-                                <button onClick={() => { setSearchType('person'); setSearchResults(null); }} className={`flex-1 py-2 text-center font-bold ${searchType === 'person' ? 'text-emerald-600 border-b-2 border-emerald-600' : 'text-gray-400'}`}>Por Persona</button>
-                                <button onClick={() => { setSearchType('date'); setSearchResults(null); }} className={`flex-1 py-2 text-center font-bold ${searchType === 'date' ? 'text-emerald-600 border-b-2 border-emerald-600' : 'text-gray-400'}`}>¿Quién Libra?</button>
-                                <button onClick={() => { setSearchType('guardias_libres'); setSearchResults(null); }} className={`flex-1 py-2 text-center font-bold text-[10px] uppercase ${searchType === 'guardias_libres' ? 'text-emerald-600 border-b-2 border-emerald-600' : 'text-gray-400'}`}>Guardias/Libres</button>
+                            <div className="scrollbar-hide mb-3 flex gap-1 overflow-x-auto border-b pb-2">
+                                {[
+                                    ['person', 'Por persona'],
+                                    ['guardias', 'Guardias'],
+                                    ['madrugadas', 'Madrugadas'],
+                                    ['libres', 'Días libres'],
+                                    ['date', 'Quién libra'],
+                                    ['range', 'Entre fechas']
+                                ].map(([type, label]) => (
+                                    <button key={type} onClick={() => { setSearchType(type); setSearchResults(null); }} className={`shrink-0 rounded-lg px-3 py-2 text-[10px] font-bold ${searchType === type ? 'bg-emerald-600 text-white' : 'bg-gray-100 text-gray-500'}`}>{label}</button>
+                                ))}
                             </div>
-                            {searchType === 'person' || searchType === 'guardias_libres' ? (
+                            {['person', 'guardias', 'madrugadas', 'libres'].includes(searchType) ? (
                                 <div className="flex gap-2 mb-2">
                                     <select className="flex-1 p-2 border rounded text-sm font-bold bg-gray-50" value={searchPerson} onChange={(e) => setSearchPerson(e.target.value)}><option value="">Selecciona Persona...</option>{names.map(n => <option key={n} value={n}>{n}</option>)}{verdes.map(v => <option key={v.name} value={v.name}>{v.name} (Verde)</option>)}</select>
                                     {searchType === 'person' && <div className="flex rounded border overflow-hidden shrink-0"><button onClick={() => setSearchRange(7)} className={`px-3 py-2 text-xs font-bold ${searchRange === 7 ? 'bg-emerald-100 text-emerald-800' : 'bg-white'}`}>7D</button><button onClick={() => setSearchRange(30)} className={`px-3 py-2 text-xs font-bold ${searchRange === 30 ? 'bg-emerald-100 text-emerald-800' : 'bg-white'}`}>30D</button></div>}
                                 </div>
-                            ) : (<div className="mb-2"><input type="date" className="w-full p-3 border rounded text-lg font-bold text-center" value={searchDateQuery} onChange={e => setSearchDateQuery(e.target.value)} /></div>)}
-                            <button onClick={performSearch} disabled={(searchType !== 'date' && !searchPerson)} className="w-full bg-emerald-600 text-white py-2 rounded font-bold text-sm">VER RESULTADO</button>
+                            ) : searchType === 'date' ? (
+                                <div className="mb-2"><label className="mb-1 block text-[10px] font-bold text-slate-500">Fecha</label><input type="date" className="w-full p-3 border rounded text-lg font-bold text-center" value={searchDateQuery} onChange={e => setSearchDateQuery(e.target.value)} /></div>
+                            ) : (
+                                <div className="mb-2 grid grid-cols-2 gap-2">
+                                    <label className="text-[10px] font-bold text-slate-500">Desde<input type="date" className="mt-1 w-full rounded border p-2 text-sm" value={searchStartDate} onChange={e => setSearchStartDate(e.target.value)} /></label>
+                                    <label className="text-[10px] font-bold text-slate-500">Hasta<input type="date" className="mt-1 w-full rounded border p-2 text-sm" value={searchEndDate} onChange={e => setSearchEndDate(e.target.value)} /></label>
+                                </div>
+                            )}
+                            <button onClick={performSearch} disabled={['person', 'guardias', 'madrugadas', 'libres'].includes(searchType) && !searchPerson} className="w-full bg-emerald-600 text-white py-2 rounded font-bold text-sm">VER RESULTADO</button>
                         </div>
                         {searchResults && (<div className="pb-10 animate-in slide-in-from-bottom-2 fade-in duration-300 flex-1 overflow-y-auto">
-                            {/* SEARCH RESULTS UI */}
+                            <button onClick={handleExportSearchResults} className="mb-3 w-full rounded-lg border border-slate-300 bg-white py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50">EXPORTAR RESULTADO A CSV</button>
                             {searchType === 'person' ? (
                                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
                                     {searchResults.map((res, idx) => (
@@ -1296,47 +1597,65 @@
                                         </div>
                                     ))}
                                 </div>
-                            ) : searchType === 'guardias_libres' ? (
+                            ) : ['guardias', 'madrugadas', 'libres'].includes(searchType) ? (
                                 <div className="space-y-2">
-                                    <h3 className="text-center font-bold text-slate-500 text-xs mb-2 uppercase tracking-widest">Próximos Eventos (Guardia 1 / Libre)</h3>
+                                    <h3 className="text-center font-bold text-slate-500 text-xs mb-2 uppercase tracking-widest">Próximos {searchType === 'guardias' ? 'servicios de guardia' : searchType === 'madrugadas' ? 'servicios de madrugada' : 'días libres'} de {searchPerson}</h3>
                                     {searchResults.map((res, idx) => (
-                                        <div key={idx} className={`flex items-center p-3 rounded-lg shadow-sm border-l-4 ${res.type === 'LIBRE' ? 'bg-red-50 border-red-500' : 'bg-emerald-50 border-emerald-500'}`}>
+                                        <div key={idx} className={`flex items-center p-3 rounded-lg shadow-sm border-l-4 ${res.type === 'LIBRE' ? 'bg-red-50 border-red-500' : res.type === 'MADRUGA' ? 'bg-orange-50 border-orange-500' : 'bg-emerald-50 border-emerald-500'}`}>
                                             <div className="bg-white/80 rounded px-2 py-1 text-center mr-3 min-w-[50px] shadow-sm">
                                                 <div className="text-[10px] font-bold text-slate-500 uppercase">{res.date.toLocaleDateString('es-ES', { weekday: 'short' })}</div>
                                                 <div className="text-xl font-black text-slate-800 leading-none">{res.date.getDate()}</div>
                                                 <div className="text-[9px] font-bold text-slate-400">{res.date.toLocaleDateString('es-ES', { month: 'short' })}</div>
                                             </div>
                                             <div className="flex-1">
-                                                <div className={`text-sm font-black ${res.type === 'LIBRE' ? 'text-red-600' : 'text-emerald-700'}`}>
-                                                    {res.type === 'LIBRE' ? 'LIBRA 🌙' : 'GUARDIA 👮‍♂️'}
+                                                <div className={`text-sm font-black ${res.type === 'LIBRE' ? 'text-red-600' : res.type === 'MADRUGA' ? 'text-orange-700' : 'text-emerald-700'}`}>
+                                                    {res.type === 'LIBRE' ? 'LIBRA' : res.type === 'MADRUGA' ? 'MADRUGA' : 'GUARDIA'}
                                                 </div>
-                                                {res.type === 'GUARDIA' && (
+                                                {res.type !== 'LIBRE' && (
                                                     <div className="text-xs font-bold text-slate-600 bg-white/50 inline-block px-1.5 rounded mt-0.5 border border-emerald-100">
-                                                        en {res.center}
+                                                        {res.center ? `en ${res.center}` : ''}{res.details?.time ? ` · ${res.details.time}` : ''}
                                                     </div>
                                                 )}
                                             </div>
                                             {res.type === 'GUARDIA' && <div className="text-emerald-200"><Icon path={Icons.Map} className="w-8 h-8" /></div>}
+                                            {res.type === 'MADRUGA' && <div className="text-orange-200"><Icon path={Icons.Cal} className="w-8 h-8" /></div>}
                                             {res.type === 'LIBRE' && <div className="text-red-200"><Icon path={Icons.Moon} className="w-8 h-8" /></div>}
                                         </div>
                                     ))}
-                                    {searchResults.length === 0 && <div className="text-center text-gray-400 py-4 italic">No se encontraron guardias (Nº1) ni libres próximos.</div>}
+                                    {searchResults.length === 0 && <div className="text-center text-gray-400 py-4 italic">No se encontraron resultados próximos.</div>}
                                 </div>
-                            ) : (
+                            ) : searchType === 'date' ? (
                                 <div className="bg-white p-6 rounded-xl shadow-md text-center border-2 border-emerald-100">
                                     <h4 className="text-sm font-bold text-gray-500 uppercase mb-4">{searchResults[0].date.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</h4>
                                     {searchResults[0].status === 'DOMINGO' ? <div className="text-gray-400 flex flex-col items-center py-4"><Icon path={Icons.Coffee} className="w-16 h-16 mb-3 text-gray-300" /><span className="text-2xl font-black text-gray-400">ES DOMINGO</span></div> : searchResults[0].status === 'NO DISPONIBLE' ? <p className="py-4 text-sm font-bold text-slate-500">No hay datos disponibles para una o ambas collas.</p> : (
                                         <div className="flex justify-around items-center py-4">{searchResults[0].libras.map((l, idx) => (<div key={idx} className="flex flex-col items-center"><span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">{l.colla}</span><div className="bg-red-50 border border-red-100 rounded-lg p-3 flex flex-col items-center min-w-[120px]"><Icon path={Icons.Moon} className="w-8 h-8 text-red-400 mb-1" /><span className="text-lg font-black text-slate-800">{l.name}</span><span className="text-[10px] font-bold text-red-500">LIBRA</span></div></div>))}</div>
                                     )}
                                 </div>
+                            ) : (
+                                <div className="space-y-2">
+                                    <h3 className="text-center font-bold text-slate-500 text-xs mb-2 uppercase tracking-widest">Personas que libran entre las fechas seleccionadas</h3>
+                                    {searchResults.map((item, idx) => (
+                                        <div key={idx} className="rounded-lg border bg-white p-3 shadow-sm">
+                                            <div className="mb-2 font-black text-slate-700">{item.date.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</div>
+                                            {item.status === 'DOMINGO' ? <span className="rounded bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-500">DOMINGO</span> : item.status === 'NO DISPONIBLE' ? <span className="text-[10px] font-bold text-amber-700">No hay datos completos para ambas collas.</span> : (
+                                                <div className="flex flex-wrap gap-2">{item.libres.map(libra => <span key={libra.colla} className="rounded bg-red-50 px-2 py-1 text-[10px] font-bold text-red-700">{libra.colla}: {libra.name} libra</span>)}</div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
                             )}
                         </div>)}
                     </div>)}
 
-                    {showSettings && tempConfig && ( <div className="fixed inset-0 z-[100] bg-white flex flex-col p-6 overflow-y-auto"> 
-                        <div className="flex justify-between items-center mb-6"><h2 className="text-xl font-bold">Configuración ({COLLA_NAMES[activeColla]})</h2><button onClick={() => setShowSettings(false)} className="bg-slate-200 p-2 rounded"><Icon path={Icons.X} className="w-5 h-5" /></button></div> 
+                    {showSettings && tempConfig && ( <div className="fixed inset-0 z-[100] bg-white flex flex-col p-3 sm:p-6 overflow-y-auto">
+                        <div className="sticky top-0 z-20 -mx-3 flex items-center justify-between border-b bg-white px-3 py-2 sm:-mx-6 sm:px-6"><h2 className="text-lg font-bold sm:text-xl">Configuración ({COLLA_NAMES[activeColla]})</h2><button onClick={() => setShowSettings(false)} className="rounded bg-slate-200 p-2"><Icon path={Icons.X} className="w-5 h-5" /></button></div>
+                        <nav className="scrollbar-hide sticky top-12 z-20 -mx-3 mb-4 flex gap-1 overflow-x-auto border-b bg-white px-3 py-2 sm:-mx-6 sm:px-6" aria-label="Secciones de configuración">
+                            {['Personal', 'Ausencias', 'Verdes', 'Turnos', 'Copias'].map(tab => (
+                                <button key={tab} onClick={() => setConfigTab(tab)} className={`shrink-0 rounded-lg px-3 py-2 text-xs font-black ${configTab === tab ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600'}`}>{tab}</button>
+                            ))}
+                        </nav>
                         <div className="max-w-4xl mx-auto space-y-8">
-                            <div className={`rounded-xl shadow-sm border p-4 ${criticalAlerts.length ? 'bg-red-50 border-red-200' : warningAlerts.length ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`}>
+                            <div className={`${configTab !== 'Copias' ? 'hidden ' : ''}rounded-xl shadow-sm border p-4 ${criticalAlerts.length ? 'bg-red-50 border-red-200' : warningAlerts.length ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`}>
                                 <div className="flex items-center justify-between gap-3 mb-3">
                                     <h3 className={`text-sm font-black uppercase ${criticalAlerts.length ? 'text-red-800' : warningAlerts.length ? 'text-amber-800' : 'text-emerald-800'}`}>
                                         Alertas de coherencia
@@ -1364,7 +1683,7 @@
                                     </div>
                                 )}
                             </div>
-                            <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4">
+                            <div className={`${configTab !== 'Copias' ? 'hidden ' : ''}rounded-xl border border-indigo-200 bg-indigo-50 p-4`}>
                                 <div className="mb-3 flex items-center justify-between gap-3">
                                     <div>
                                         <h3 className="text-sm font-black uppercase text-indigo-900">Historial de cambios</h3>
@@ -1399,7 +1718,7 @@
                                     <p className="text-xs font-semibold text-indigo-800">Aún no hay cambios registrados. Los próximos cambios guardados aparecerán aquí.</p>
                                 )}
                             </div>
-                            <div className="bg-slate-50 rounded-xl shadow-sm border border-slate-200 p-4">
+                            <div className={`${configTab !== 'Copias' ? 'hidden ' : ''}bg-slate-50 rounded-xl shadow-sm border border-slate-200 p-4`}>
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                     <button onClick={handleExportBackup} className="bg-white border border-slate-300 text-slate-700 py-3 rounded-lg font-bold shadow-sm hover:bg-slate-100 flex items-center justify-center gap-2">
                                         <Icon path={Icons.Share} className="w-4 h-4" /> EXPORTAR COPIA
@@ -1408,9 +1727,13 @@
                                         <Icon path={Icons.Plus} className="w-4 h-4" /> IMPORTAR COPIA
                                     </button>
                                 </div>
+                                {conflictBackupAvailable && <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                                    <p className="text-xs font-bold text-amber-900">Hay un borrador local que no se sincronizó por cambios simultáneos.</p>
+                                    <button onClick={exportConflictBackup} className="mt-2 w-full rounded-lg bg-amber-700 py-2 text-xs font-bold text-white">EXPORTAR BORRADOR PARA RECUPERARLO</button>
+                                </div>}
                                 <input ref={importBackupInputRef} type="file" accept="application/json,.json" className="hidden" onChange={handleImportBackup} />
                             </div>
-                            <div className="bg-blue-50 rounded-xl shadow-sm border border-blue-200 p-6">
+                            <div className={`${configTab !== 'Personal' ? 'hidden ' : ''}bg-blue-50 rounded-xl shadow-sm border border-blue-200 p-6`}>
                                 <h3 className="text-xl font-bold text-blue-800 mb-6 border-b border-blue-200 pb-2 flex items-center gap-2"><Icon path={Icons.Swap} className="w-6 h-6" /> TRASPASO ENTRE COLLAS</h3>
                                 <div className="space-y-4">
                                     <div><label className="block text-xs font-bold text-gray-500 mb-1">Origen</label><select className="w-full border rounded p-2 text-sm font-bold" value={transferSource} onChange={e => setTransferSource(e.target.value)}><option value="1">RAYO</option><option value="2">MIGUEL SEXI</option></select></div>
@@ -1420,7 +1743,7 @@
                                     <button onClick={handleTransfer} className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold shadow hover:bg-blue-700 flex justify-center items-center gap-2"><Icon path={Icons.Swap} className="w-4 h-4" /> REALIZAR TRASPASO</button>
                                 </div>
                             </div>
-                            <div className="bg-red-50 rounded-xl shadow-sm border border-red-200 p-6">
+                            <div className={`${configTab !== 'Ausencias' ? 'hidden ' : ''}bg-red-50 rounded-xl shadow-sm border border-red-200 p-6`}>
                                 <h3 className="text-xl font-bold text-red-800 mb-6 border-b border-red-200 pb-2 flex items-center gap-2"><Icon path={Icons.Bandage} className="w-6 h-6" /> GESTIONAR AUSENCIAS</h3>
                                 <div className="space-y-4">
                                     <div><label className="block text-xs font-bold text-gray-500 mb-1">Persona</label><select className="w-full border rounded p-2 text-sm" value={absenceForm.name} onChange={e => setAbsenceForm({...absenceForm, name: e.target.value})}><option value="">Selecciona...</option>{names.map(n => <option key={n} value={n}>{n}</option>)}{verdes.map(n => <option key={n.name} value={n.name}>{n.name} (Verde)</option>)}</select></div>
@@ -1434,8 +1757,8 @@
                                 </div>
                                 <div className="mt-4 pt-4 border-t border-red-100"><h4 className="text-xs font-bold text-red-400 uppercase tracking-widest mb-3">Ausencias Registradas</h4>{activeAbsencesList.length > 0 ? (<div className="space-y-2">{activeAbsencesList.map((item, idx) => { const isActive = !item.end; return (<div key={idx} className="flex justify-between items-center bg-white p-2 rounded border border-red-100 text-xs"><div className="flex flex-col"><div className="flex items-center gap-2"><span className="font-bold text-gray-800">{item.name}</span><span className={`px-1.5 rounded text-[9px] font-bold ${item.status === 'BAJA' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>{item.status}</span></div><span className="font-mono text-gray-500 text-[10px]">Desde {item.start} {item.end ? `hasta ${item.end}` : '(En curso)'}</span><span className="text-[9px] text-gray-400 italic">{item.shiftsRotation ? 'Corre turno' : 'No corre turno'}</span></div><div className="flex gap-2">{isActive && <button onClick={() => handleEndAbsence(item.id)} className="text-white bg-green-500 hover:bg-green-600 px-2 py-1 rounded text-[9px] font-bold">DAR ALTA</button>}<button onClick={() => handleDeleteAbsence(item.id)} className="text-red-400 hover:text-red-600 p-1"><Icon path={Icons.Trash} className="w-4 h-4" /></button></div></div>)})}</div>) : (<p className="text-xs text-gray-400 italic text-center">No hay ausencias registradas.</p>)}</div>
                             </div>
-                            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6"><h3 className="text-xl font-bold text-slate-800 mb-6 border-b pb-2 flex items-center gap-2"><Icon path={Icons.Users} className="w-6 h-6" /> GESTIÓN DE PERSONAL ({COLLA_NAMES[activeColla]})</h3><form onSubmit={handleAddName} className="flex gap-3 mb-6"><input type="text" placeholder="Nuevo Nombre..." className="flex-1 border-2 border-slate-200 rounded-lg p-3 text-lg uppercase" value={newName} onChange={(e) => setNewName(e.target.value)} /><input type="number" placeholder="POS" min="1" max={names.length + 1} className="w-16 border-2 border-slate-200 rounded-lg p-2 text-center text-sm font-bold" value={newPosition} onChange={(e) => setNewPosition(e.target.value)} /><button type="submit" className="bg-blue-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-blue-700 flex items-center gap-2 shadow-sm"><Icon path={Icons.Plus} className="w-5 h-5" /> AÑADIR</button></form><div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">{names.map((name, idx) => (<div key={idx} className="flex items-center justify-between bg-slate-50 p-2 rounded border border-slate-200 group"><div className="flex items-center gap-2 overflow-hidden"><span className="bg-slate-200 text-slate-600 text-xs font-mono w-6 h-6 flex items-center justify-center rounded-full shrink-0">{idx + 1}</span><span className="font-bold text-slate-700 truncate text-sm">{name}</span></div><button onClick={() => handleRemoveName(idx)} className="text-slate-300 hover:text-red-500 hover:bg-red-50 p-1 rounded transition"><Icon path={Icons.Trash} className="w-4 h-4" /></button></div>))}</div></div>
-                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                            <div className={`${configTab !== 'Personal' ? 'hidden ' : ''}bg-white rounded-xl shadow-sm border border-slate-200 p-6`}><h3 className="text-xl font-bold text-slate-800 mb-6 border-b pb-2 flex items-center gap-2"><Icon path={Icons.Users} className="w-6 h-6" /> GESTIÓN DE PERSONAL ({COLLA_NAMES[activeColla]})</h3><form onSubmit={handleAddName} className="flex gap-3 mb-6"><input type="text" placeholder="Nuevo Nombre..." className="flex-1 border-2 border-slate-200 rounded-lg p-3 text-lg uppercase" value={newName} onChange={(e) => setNewName(e.target.value)} /><input type="number" placeholder="POS" min="1" max={names.length + 1} className="w-16 border-2 border-slate-200 rounded-lg p-2 text-center text-sm font-bold" value={newPosition} onChange={(e) => setNewPosition(e.target.value)} /><button type="submit" className="bg-blue-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-blue-700 flex items-center gap-2 shadow-sm"><Icon path={Icons.Plus} className="w-5 h-5" /> AÑADIR</button></form><div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">{names.map((name, idx) => (<div key={idx} className="flex items-center justify-between bg-slate-50 p-2 rounded border border-slate-200 group"><div className="flex items-center gap-2 overflow-hidden"><span className="bg-slate-200 text-slate-600 text-xs font-mono w-6 h-6 flex items-center justify-center rounded-full shrink-0">{idx + 1}</span><span className="font-bold text-slate-700 truncate text-sm">{name}</span></div><button onClick={() => handleRemoveName(idx)} className="text-slate-300 hover:text-red-500 hover:bg-red-50 p-1 rounded transition"><Icon path={Icons.Trash} className="w-4 h-4" /></button></div>))}</div></div>
+                            <div className={`${configTab !== 'Turnos' ? 'hidden ' : ''}grid grid-cols-1 lg:grid-cols-2 gap-8`}>
                                 <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
                                     <h3 className="text-xl font-bold text-blue-800 mb-6 border-b pb-2 flex items-center gap-2"><Icon path={Icons.Map} className="w-6 h-6" /> VARIABLES CEHORPA</h3>
                                     <div className="grid grid-cols-1 gap-6">
@@ -1494,8 +1817,8 @@
                                     </div>
                                 </div>
                             </div>
-                            <div className="bg-gradient-to-r from-slate-100 to-white rounded-xl shadow-sm border border-slate-300 p-6"><h3 className="text-xl font-bold text-slate-900 mb-4 border-b pb-2 flex items-center gap-2"><Icon path={Icons.Rotate} className="w-6 h-6 text-blue-600" /> PUNTO DE PARTIDA ({COLLA_NAMES[activeColla]})</h3><div className="grid grid-cols-1 md:grid-cols-3 gap-6"><div><label className="block text-sm font-bold text-gray-700 mb-1">Fecha de Inicio</label><input type="date" className="w-full p-3 border rounded-lg text-lg font-mono" value={tempRefData.dateString} onChange={(e) => setTempRefData({...tempRefData, dateString: e.target.value})} /></div><div><label className="block text-sm font-bold text-gray-700 mb-1">Primer Guardia (Nº 1)</label><select className="w-full p-3 border rounded-lg text-lg font-bold text-slate-700" value={tempRefData.firstGuardName} onChange={(e) => setTempRefData({...tempRefData, firstGuardName: e.target.value})}>{names.map(name => <option key={name} value={name}>{name}</option>)}</select></div><div><label className="block text-sm font-bold text-gray-700 mb-1">Centro ese día</label><div className="flex gap-0 rounded-lg overflow-hidden border border-gray-300 h-[50px]"><button onClick={() => setTempRefData({...tempRefData, center: 'CORTIJOS'})} className={`flex-1 font-bold transition ${tempRefData.center === 'CORTIJOS' ? 'bg-emerald-600 text-white' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}>CORTIJOS</button><button onClick={() => setTempRefData({...tempRefData, center: 'CEHORPA'})} className={`flex-1 font-bold transition ${tempRefData.center === 'CEHORPA' ? 'bg-blue-600 text-white' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}>CEHORPA</button></div></div></div></div>
-                            <div className="bg-green-50 rounded-xl shadow-sm border border-green-200 p-6">
+                            <div className={`${configTab !== 'Turnos' ? 'hidden ' : ''}bg-gradient-to-r from-slate-100 to-white rounded-xl shadow-sm border border-slate-300 p-6`}><h3 className="text-xl font-bold text-slate-900 mb-4 border-b pb-2 flex items-center gap-2"><Icon path={Icons.Rotate} className="w-6 h-6 text-blue-600" /> PUNTO DE PARTIDA ({COLLA_NAMES[activeColla]})</h3><div className="grid grid-cols-1 md:grid-cols-3 gap-6"><div><label className="block text-sm font-bold text-gray-700 mb-1">Fecha de Inicio</label><input type="date" className="w-full p-3 border rounded-lg text-lg font-mono" value={tempRefData.dateString} onChange={(e) => setTempRefData({...tempRefData, dateString: e.target.value})} /></div><div><label className="block text-sm font-bold text-gray-700 mb-1">Primer Guardia (Nº 1)</label><select className="w-full p-3 border rounded-lg text-lg font-bold text-slate-700" value={tempRefData.firstGuardName} onChange={(e) => setTempRefData({...tempRefData, firstGuardName: e.target.value})}>{names.map(name => <option key={name} value={name}>{name}</option>)}</select></div><div><label className="block text-sm font-bold text-gray-700 mb-1">Centro ese día</label><div className="flex gap-0 rounded-lg overflow-hidden border border-gray-300 h-[50px]"><button onClick={() => setTempRefData({...tempRefData, center: 'CORTIJOS'})} className={`flex-1 font-bold transition ${tempRefData.center === 'CORTIJOS' ? 'bg-emerald-600 text-white' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}>CORTIJOS</button><button onClick={() => setTempRefData({...tempRefData, center: 'CEHORPA'})} className={`flex-1 font-bold transition ${tempRefData.center === 'CEHORPA' ? 'bg-blue-600 text-white' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}>CEHORPA</button></div></div></div></div>
+                            <div className={`${configTab !== 'Verdes' ? 'hidden ' : ''}bg-green-50 rounded-xl shadow-sm border border-green-200 p-6`}>
                                 <h3 className="text-xl font-bold text-green-800 mb-6 border-b border-green-200 pb-2 flex items-center gap-2"><Icon path={Icons.Leaf} className="w-6 h-6" /> LOS VERDES (Personal Especial)</h3>
                                 <div className="bg-white p-4 rounded-lg border border-green-100 mb-4">
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
@@ -1545,7 +1868,7 @@
                                     {verdes.length === 0 && <p className="text-center text-gray-400 italic text-xs">No hay personal verde configurado.</p>}
                                 </div>
                             </div>
-                            <button onClick={saveSettingsToCloud} className="w-full bg-green-600 text-white py-4 rounded-xl font-bold">GUARDAR CONFIGURACIÓN Y PUNTO DE PARTIDA</button>
+                            <button onClick={saveSettingsToCloud} className="sticky bottom-0 z-10 w-full rounded-xl bg-green-600 py-3 font-bold text-white shadow-lg">GUARDAR CAMBIOS</button>
                         </div> 
                     </div> )}
 
