@@ -1647,14 +1647,15 @@
                         </div>)}
                     </div>)}
 
-                    {showSettings && tempConfig && ( <div className="fixed inset-0 z-[100] bg-white flex flex-col p-3 sm:p-6 overflow-y-auto">
-                        <div className="sticky top-0 z-20 -mx-3 flex items-center justify-between border-b bg-white px-3 py-2 sm:-mx-6 sm:px-6"><h2 className="text-lg font-bold sm:text-xl">Configuración ({COLLA_NAMES[activeColla]})</h2><button onClick={() => setShowSettings(false)} className="rounded bg-slate-200 p-2"><Icon path={Icons.X} className="w-5 h-5" /></button></div>
-                        <nav className="scrollbar-hide sticky top-12 z-20 -mx-3 mb-4 flex gap-1 overflow-x-auto border-b bg-white px-3 py-2 sm:-mx-6 sm:px-6" aria-label="Secciones de configuración">
+                    {showSettings && tempConfig && ( <div className="fixed inset-0 z-[100] flex flex-col overflow-hidden bg-white p-3 sm:p-6">
+                        <div className="-mx-3 flex shrink-0 items-center justify-between border-b bg-white px-3 py-2 sm:-mx-6 sm:px-6"><h2 className="text-lg font-bold sm:text-xl">Configuración ({COLLA_NAMES[activeColla]})</h2><button onClick={() => setShowSettings(false)} className="rounded bg-slate-200 p-2"><Icon path={Icons.X} className="w-5 h-5" /></button></div>
+                        <nav className="-mx-3 mb-2 grid shrink-0 grid-cols-5 gap-1 border-b bg-white px-3 py-2 sm:-mx-6 sm:px-6" aria-label="Secciones de configuración">
                             {['Personal', 'Ausencias', 'Verdes', 'Turnos', 'Copias'].map(tab => (
-                                <button key={tab} onClick={() => setConfigTab(tab)} className={`shrink-0 rounded-lg px-3 py-2 text-xs font-black ${configTab === tab ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600'}`}>{tab}</button>
+                                <button key={tab} onClick={() => setConfigTab(tab)} aria-current={configTab === tab ? 'page' : undefined} className={`min-w-0 rounded-lg px-1 py-2 text-[11px] font-black sm:px-3 sm:text-sm ${configTab === tab ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600'}`}>{tab}</button>
                             ))}
                         </nav>
-                        <div className="max-w-4xl mx-auto space-y-8">
+                        <div className="min-h-0 flex-1 overflow-y-auto">
+                        <div className="mx-auto max-w-4xl space-y-8 pb-4">
                             <div className={`${configTab !== 'Copias' ? 'hidden ' : ''}rounded-xl shadow-sm border p-4 ${criticalAlerts.length ? 'bg-red-50 border-red-200' : warningAlerts.length ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`}>
                                 <div className="flex items-center justify-between gap-3 mb-3">
                                     <h3 className={`text-sm font-black uppercase ${criticalAlerts.length ? 'text-red-800' : warningAlerts.length ? 'text-amber-800' : 'text-emerald-800'}`}>
@@ -1868,8 +1869,11 @@
                                     {verdes.length === 0 && <p className="text-center text-gray-400 italic text-xs">No hay personal verde configurado.</p>}
                                 </div>
                             </div>
-                            <button onClick={saveSettingsToCloud} className="sticky bottom-0 z-10 w-full rounded-xl bg-green-600 py-3 font-bold text-white shadow-lg">GUARDAR CAMBIOS</button>
                         </div> 
+                        </div>
+                        <div className="-mx-3 shrink-0 border-t bg-white px-3 pt-2 sm:-mx-6 sm:px-6">
+                            <button onClick={saveSettingsToCloud} className="w-full rounded-xl bg-green-600 py-3 font-bold text-white shadow-lg">GUARDAR CAMBIOS</button>
+                        </div>
                     </div> )}
 
                     <main className="max-w-lg mx-auto p-1.5 flex-1 flex flex-col w-full">
