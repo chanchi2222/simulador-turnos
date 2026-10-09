@@ -36,7 +36,7 @@
 
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
-        const { formatLocalDate, parseLocalDate, getMonday, getInclusivePeriodEndDate, calculateSimulation, validateConfig, validateDataIntegrity, recordDataChange, undoLastDataChange, normalizeConfig } = window.SimulatorCore;
+        const { formatLocalDate, parseLocalDate, getMonday, getInclusivePeriodEndDate, calculateSimulation, validateConfig, validateDataIntegrity, recordDataChange, undoLastDataChange, normalizeConfig, normalizePersonName } = window.SimulatorCore;
 
         // ==========================================
         // 1. CONSTANTES, ICONOS Y HELPERS
@@ -389,6 +389,15 @@
             const [undoStack, setUndoStack] = useState([]);
             const [importPreview, setImportPreview] = useState(null);
             const [conflictBackupAvailable, setConflictBackupAvailable] = useState(Boolean(localStorage.getItem('turnos_conflict_backup_v1')));
+            const [preImportBackup, setPreImportBackup] = useState(() => {
+                try {
+                    const stored = localStorage.getItem('turnos_pre_import_backup_v1');
+                    return stored ? JSON.parse(stored) : null;
+                } catch (error) {
+                    console.error('No se pudo leer la copia automática previa a la importación.', error);
+                    return null;
+                }
+            });
             const setLocalChangesPending = pending => {
                 localChangesPendingRef.current = pending;
                 try {
@@ -881,6 +890,53 @@
                 window.setTimeout(() => URL.revokeObjectURL(url), 1000);
             };
 
+            const prepareBackupContent = parsed => {
+                const content = parsed && parsed.collas ? parsed : parsed && parsed.content;
+                if (!content || !content.collas || !content.config) {
+                    throw new Error('El archivo no tiene el formato esperado.');
+                }
+                const missingData = ['1', '2'].flatMap(collaId => {
+                    const colla = content.collas[collaId];
+                    const label = COLLA_NAMES[collaId];
+                    if (!colla || typeof colla !== 'object') return [`Falta la colla ${label}.`];
+                    const errors = [];
+                    if (!Array.isArray(colla.names)) errors.push(`${label}: falta la lista de personal.`);
+                    if (!Array.isArray(colla.verdes)) errors.push(`${label}: faltan los datos de verdes.`);
+                    if (!Array.isArray(colla.absences)) errors.push(`${label}: faltan los datos de ausencias.`);
+                    if (!colla.refData || typeof colla.refData !== 'object') {
+                        errors.push(`${label}: falta el punto de partida.`);
+                    } else {
+                        if (!parseLocalDate(colla.refData.dateString)) errors.push(`${label}: la fecha del punto de partida no es válida.`);
+                        if (!['CORTIJOS', 'CEHORPA'].includes(colla.refData.center)) errors.push(`${label}: falta un centro inicial válido.`);
+                        if (colla.names && colla.names.length && !colla.names.includes(colla.refData.firstGuardName)) {
+                            errors.push(`${label}: el primer guardia no está en la lista de personal.`);
+                        }
+                    }
+                    return errors;
+                });
+                if (missingData.length) throw new Error(missingData.join(' '));
+
+                const normalized = normalizeConfig(content.config, DEFAULT_CONFIG);
+                if (normalized.errors.length) throw new Error(normalized.errors.join(' '));
+                const safeCollas = sanitizeCollas(content.collas);
+                const integrityErrors = validateDataIntegrity(safeCollas, normalized.config, { collaNames: COLLA_NAMES })
+                    .filter(problem => problem.severity === 'error');
+                if (integrityErrors.length) {
+                    throw new Error(integrityErrors.map(problem => `${problem.scope}: ${problem.message}`).join(' '));
+                }
+                return {
+                    collas: safeCollas,
+                    config: normalized.config,
+                    adjustedIntermedios: normalized.adjustedIntermedios,
+                    counts: ['1', '2'].map(collaId => ({
+                        name: COLLA_NAMES[collaId],
+                        people: safeCollas[collaId].names.length,
+                        verdes: safeCollas[collaId].verdes.length,
+                        absences: safeCollas[collaId].absences.length
+                    }))
+                };
+            };
+
             const handleImportBackup = (event) => {
                 const file = event.target.files && event.target.files[0];
                 if (!file) return;
@@ -888,54 +944,10 @@
                 reader.onload = async () => {
                     try {
                         const parsed = JSON.parse(reader.result);
-                        const content = parsed && parsed.collas ? parsed : parsed && parsed.content;
-                        if (!content || !content.collas || !content.config) {
-                            throw new Error('El archivo no tiene el formato esperado.');
-                        }
-                        const missingData = ['1', '2'].flatMap(collaId => {
-                            const colla = content.collas[collaId];
-                            const label = COLLA_NAMES[collaId];
-                            if (!colla || typeof colla !== 'object') return [`Falta la colla ${label}.`];
-                            const errors = [];
-                            if (!Array.isArray(colla.names)) errors.push(`${label}: falta la lista de personal.`);
-                            if (!Array.isArray(colla.verdes)) errors.push(`${label}: faltan los datos de verdes.`);
-                            if (!Array.isArray(colla.absences)) errors.push(`${label}: faltan los datos de ausencias.`);
-                            if (!colla.refData || typeof colla.refData !== 'object') {
-                                errors.push(`${label}: falta el punto de partida.`);
-                            } else {
-                                if (!parseLocalDate(colla.refData.dateString)) errors.push(`${label}: la fecha del punto de partida no es válida.`);
-                                if (!['CORTIJOS', 'CEHORPA'].includes(colla.refData.center)) errors.push(`${label}: falta un centro inicial válido.`);
-                                if (colla.names && colla.names.length && !colla.names.includes(colla.refData.firstGuardName)) {
-                                    errors.push(`${label}: el primer guardia no está en la lista de personal.`);
-                                }
-                            }
-                            return errors;
-                        });
-                        if (missingData.length) {
-                            throw new Error(missingData.join(' '));
-                        }
-                        const normalized = normalizeConfig(content.config, DEFAULT_CONFIG);
-                        if (normalized.errors.length) {
-                            return showMessage('Copia no válida', normalized.errors.join(' '));
-                        }
-                        const safeCollas = sanitizeCollas(content.collas);
-                        const integrityErrors = validateDataIntegrity(safeCollas, normalized.config, { collaNames: COLLA_NAMES })
-                            .filter(problem => problem.severity === 'error');
-                        if (integrityErrors.length) {
-                            throw new Error(integrityErrors.map(problem => `${problem.scope}: ${problem.message}`).join(' '));
-                        }
-                        const counts = ['1', '2'].map(collaId => ({
-                            name: COLLA_NAMES[collaId],
-                            people: safeCollas[collaId].names.length,
-                            verdes: safeCollas[collaId].verdes.length,
-                            absences: safeCollas[collaId].absences.length
-                        }));
+                        const preparedBackup = prepareBackupContent(parsed);
                         setImportPreview({
                             name: file.name,
-                            collas: safeCollas,
-                            config: normalized.config,
-                            adjustedIntermedios: normalized.adjustedIntermedios,
-                            counts
+                            ...preparedBackup
                         });
                     } catch (error) {
                         const reason = error && error.message ? ` ${error.message}` : '';
@@ -962,6 +974,7 @@
                 };
                 try {
                     localStorage.setItem('turnos_pre_import_backup_v1', JSON.stringify(safetyBackup));
+                    setPreImportBackup(safetyBackup);
                 } catch (error) {
                     showMessage('No se pudo crear la copia de seguridad', 'La importación se canceló para no reemplazar tus datos sin una copia previa. Libera espacio del navegador e inténtalo de nuevo.');
                     return;
@@ -982,6 +995,64 @@
                 }
             };
 
+            const requestRestorePreImportBackup = () => {
+                if (!preImportBackup) {
+                    showMessage('No hay copia previa', 'No se encontró una copia automática anterior a la última importación en este navegador.');
+                    return;
+                }
+                let preparedBackup;
+                try {
+                    preparedBackup = prepareBackupContent(preImportBackup);
+                } catch (error) {
+                    const reason = error && error.message ? ` ${error.message}` : '';
+                    showMessage('Copia automática no válida', `No se restauró nada porque la copia previa está incompleta o dañada.${reason}`);
+                    return;
+                }
+                const backupDate = preImportBackup.exportedAt && !Number.isNaN(new Date(preImportBackup.exportedAt).getTime())
+                    ? new Date(preImportBackup.exportedAt).toLocaleString('es-ES')
+                    : 'fecha desconocida';
+                setModalConfig({
+                    show: true,
+                    title: 'Restaurar copia previa',
+                    message: `Se reemplazarán los datos actuales por la copia guardada el ${backupDate}. Antes de hacerlo se descargará otra copia del estado actual. ¿Continuar?`,
+                    isAlert: false,
+                    onConfirm: async () => {
+                        setModalConfig(prev => ({ ...prev, show: false }));
+                        const beforeRestore = {
+                            version: 1,
+                            exportedAt: new Date().toISOString(),
+                            reason: 'Copia automática antes de restaurar la copia previa a una importación',
+                            collas: collasData,
+                            config: globalConfig
+                        };
+                        try {
+                            localStorage.setItem('turnos_pre_restore_backup_v1', JSON.stringify(beforeRestore));
+                        } catch (error) {
+                            showMessage('No se pudo crear la copia de seguridad', 'La restauración se canceló para proteger los datos actuales. Comprueba el espacio disponible en el navegador e inténtalo de nuevo.');
+                            return;
+                        }
+                        try {
+                            downloadJson(beforeRestore, `simulador-turnos-antes-de-restaurar-${formatLocalDate(new Date())}.json`);
+                        } catch (error) {
+                            console.error('La copia previa quedó guardada en el navegador, pero no se pudo descargar.', error);
+                        }
+
+                        const saved = await saveAllData(preparedBackup.collas, preparedBackup.config);
+                        if (!saved) return;
+                        try {
+                            localStorage.removeItem('turnos_pre_import_backup_v1');
+                            setPreImportBackup(null);
+                        } catch (error) {
+                            console.error('Los datos se restauraron, pero no se pudo retirar el aviso de la copia anterior.', error);
+                        }
+                        setShowSettings(false);
+                        showMessage('Copia restaurada', `Se recuperaron los datos guardados antes de la última importación.${preparedBackup.adjustedIntermedios
+                            ? ' Se ajustaron los intermedios de Cortijos para cuadrar la capacidad.'
+                            : ''}`);
+                    }
+                });
+            };
+
             const exportConflictBackup = () => {
                 try {
                     const savedDraft = localStorage.getItem('turnos_conflict_backup_v1');
@@ -1000,7 +1071,7 @@
                 const nameToAdd = newName.trim().toLocaleUpperCase('es-ES');
                 if (!nameToAdd) return showMessage('Falta el nombre', 'Escribe el nombre de la persona que quieres añadir.');
                 const existingNames = [...names, ...verdes.map(person => person.name)];
-                if (existingNames.some(name => name.toLocaleUpperCase('es-ES') === nameToAdd)) {
+                if (existingNames.some(name => normalizePersonName(name) === normalizePersonName(nameToAdd))) {
                     return showMessage('Nombre duplicado', 'Esa persona ya está registrada en esta colla.');
                 }
                 const position = newPosition === '' ? names.length + 1 : Number(newPosition);
@@ -1036,7 +1107,7 @@
                         await updateActiveCollaData({
                             names: updatedNames,
                             refData: updatedRefData,
-                            absences: (collasData[activeColla].absences || []).filter(absence => absence.name !== removedName)
+                            absences: (collasData[activeColla].absences || []).filter(absence => normalizePersonName(absence.name) !== normalizePersonName(removedName))
                         });
                     }
                 });
@@ -1069,7 +1140,7 @@
                     return showMessage('Configuración no válida', 'El centro o el tipo de rotación seleccionado no es válido.');
                 }
                 const existingNames = [...names, ...verdes.map(person => person.name)];
-                if (existingNames.some(personName => personName.toLocaleUpperCase('es-ES') === name)) {
+                if (existingNames.some(personName => normalizePersonName(personName) === normalizePersonName(name))) {
                     return showMessage('Nombre duplicado', 'Esa persona ya está registrada en esta colla.');
                 }
                 const updatedVerdes = [...verdes, {
@@ -1104,7 +1175,7 @@
                         await updateActiveCollaData({
                             verdes: updatedVerdes,
                             absences: removedVerde
-                                ? (collasData[activeColla].absences || []).filter(absence => absence.name !== removedVerde.name)
+                                ? (collasData[activeColla].absences || []).filter(absence => normalizePersonName(absence.name) !== normalizePersonName(removedVerde.name))
                                 : collasData[activeColla].absences || []
                         });
                     }
@@ -1728,6 +1799,18 @@
                                         <Icon path={Icons.Plus} className="w-4 h-4" /> IMPORTAR COPIA
                                     </button>
                                 </div>
+                                {preImportBackup && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+                                    <h4 className="text-xs font-black text-emerald-900">COPIA ANTERIOR A LA ÚLTIMA IMPORTACIÓN</h4>
+                                    <p className="mt-1 text-[10px] font-semibold text-emerald-800">
+                                        Guardada {preImportBackup.exportedAt && !Number.isNaN(new Date(preImportBackup.exportedAt).getTime())
+                                            ? new Date(preImportBackup.exportedAt).toLocaleString('es-ES')
+                                            : 'con fecha desconocida'} en este navegador.
+                                    </p>
+                                    <button onClick={requestRestorePreImportBackup} className="mt-2 w-full rounded-lg bg-emerald-700 py-2 text-xs font-bold text-white hover:bg-emerald-800">
+                                        RESTAURAR COPIA ANTERIOR
+                                    </button>
+                                </div>}
+                                <p className="mt-3 text-[10px] text-slate-500">Las copias automáticas se guardan en este navegador. Conserva también los archivos exportados fuera del dispositivo.</p>
                                 {conflictBackupAvailable && <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
                                     <p className="text-xs font-bold text-amber-900">Hay un borrador local que no se sincronizó por cambios simultáneos.</p>
                                     <button onClick={exportConflictBackup} className="mt-2 w-full rounded-lg bg-amber-700 py-2 text-xs font-bold text-white">EXPORTAR BORRADOR PARA RECUPERARLO</button>

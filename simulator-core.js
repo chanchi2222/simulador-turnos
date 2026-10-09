@@ -22,6 +22,8 @@
         return date;
     };
 
+    const normalizePersonName = (value) => String(value || '').trim().toLocaleUpperCase('es-ES');
+
     const getMonday = (date) => {
         const monday = new Date(date);
         const day = monday.getDay();
@@ -44,7 +46,10 @@
     };
 
     const getVerdeSchedule = (verde, targetDate, currentCenter) => {
-        const target = new Date(targetDate);
+        if (!verde || !targetDate || !['CORTIJOS', 'CEHORPA'].includes(currentCenter)) return null;
+        const target = targetDate instanceof Date ? new Date(targetDate) : parseLocalDate(targetDate);
+        if (!target) return null;
+        if (Number.isNaN(target.getTime())) return null;
         target.setHours(0, 0, 0, 0);
         const startDate = parseLocalDate(verde.startDate);
         const endDate = verde.endDate ? parseLocalDate(verde.endDate) : null;
@@ -62,8 +67,11 @@
         ];
         const pattern = patterns[((baseCycle + weeksPassed) % patterns.length + patterns.length) % patterns.length];
         const startCenter = verde.startCenter || (verde.centerMode === 'CORTIJOS' ? 'CORTIJOS' : 'CEHORPA');
+        if (!['CORTIJOS', 'CEHORPA'].includes(startCenter)) return null;
         const otherCenter = startCenter === 'CORTIJOS' ? 'CEHORPA' : 'CORTIJOS';
         const rotationMode = verde.rotationMode || (verde.rotatesCenter ? 'SEMANAL' : 'FIJO');
+        if (!['SEMANAL', 'DIARIO', 'FIJO', 'SEGUN_GRUPO'].includes(rotationMode)) return null;
+        if (rotationMode === 'SEGUN_GRUPO' && !['CORTIJOS', 'CEHORPA'].includes(currentCenter)) return null;
         let effectiveCenter = startCenter;
 
         if (rotationMode === 'SEMANAL') {
@@ -136,7 +144,7 @@
         const stepHigh = direction > 0 ? targetSerial : referenceSerial - 1;
         const affectedIntervals = [];
         for (const absence of absences || []) {
-            if (absence.shiftsRotation === false || !absence.start) continue;
+            if (!absence || absence.shiftsRotation === false || !absence.start) continue;
             const absenceStart = parseLocalDate(absence.start);
             const absenceEnd = absence.end ? parseLocalDate(absence.end) : null;
             if (!absenceStart || (absence.end && !absenceEnd)) continue;
@@ -158,7 +166,8 @@
         if (direction < 0) mergedIntervals.reverse();
 
         const isAbsent = (name, dateString) => (absences || []).find((absence) =>
-            absence.name === name &&
+            absence &&
+            normalizePersonName(absence.name) === normalizePersonName(name) &&
             absence.start <= dateString &&
             (absence.end || '9999-12-31') >= dateString
         );
@@ -288,7 +297,6 @@
         const problems = [];
         const collaNames = options.collaNames || { '1': 'Colla 1', '2': 'Colla 2' };
         const addProblem = (severity, scope, message) => problems.push({ severity, scope, message });
-        const normalizeName = (value) => String(value || '').trim().toLocaleUpperCase('es-ES');
         const isPlaceholderName = (value) => /^PERSONA\s+\d+$/i.test(String(value || '').trim());
         const isValidCenter = (value) => ['CORTIJOS', 'CEHORPA'].includes(value);
         const isValidRotationMode = (value) => ['SEMANAL', 'DIARIO', 'FIJO', 'SEGUN_GRUPO'].includes(value);
@@ -315,7 +323,7 @@
             if (!names.length) addProblem('warning', label, 'La colla no tiene personal normal configurado.');
 
             const registerName = (name, kind, index) => {
-                const normalized = normalizeName(name);
+                const normalized = normalizePersonName(name);
                 if (!normalized) {
                     addProblem('error', label, `Hay ${kind === 'verde' ? 'un verde' : 'una persona'} sin nombre en la posición ${index + 1}.`);
                     return;
@@ -378,7 +386,7 @@
             const absencesByName = new Map();
             absences.forEach((absence, index) => {
                 const absenceLabel = absence && absence.name ? absence.name : `Ausencia ${index + 1}`;
-                const normalizedAbsenceName = normalizeName(absence && absence.name);
+                const normalizedAbsenceName = normalizePersonName(absence && absence.name);
                 if (!absence || !knownNames.has(normalizedAbsenceName)) {
                     addProblem('error', label, `${absenceLabel}: la ausencia apunta a una persona que no existe.`);
                 }
@@ -571,7 +579,7 @@
         const dateStr = formatLocalDate(safeTargetDate);
 
         const isAbsent = (pName, dStr) => cAbsencesList.find((absence) => {
-            if (absence.name !== pName) return false;
+            if (!absence || normalizePersonName(absence.name) !== normalizePersonName(pName)) return false;
             const activeStart = absence.start;
             const activeEnd = absence.end ? absence.end : '9999-12-31';
             return dStr >= activeStart && dStr <= activeEnd;
@@ -635,6 +643,7 @@
         const remainingVerdesList = [];
 
         cVerdes.forEach((verde) => {
+            if (!verde || typeof verde.name !== 'string' || !verde.name.trim()) return;
             const schedule = getVerdeSchedule(
                 { ...verde, startDate: verde.startDate || formatLocalDate(refDateObj) },
                 safeTargetDate,
@@ -733,7 +742,8 @@
         };
 
         if (currentCenter === 'CEHORPA') {
-            activeVerdesGuardia.forEach((verde) => injectVerdeLegacy(cehorpaList, verde.name, 2, 'GUARDIA'));
+            const guardiaInsertIndex = Math.min(2, Math.max(0, config.cehorpa.guardias - 1));
+            activeVerdesGuardia.forEach((verde) => injectVerdeLegacy(cehorpaList, verde.name, guardiaInsertIndex, 'GUARDIA'));
             activeVerdesMadruga.forEach((verde, idx) => injectVerdeLegacy(cehorpaList, verde.name, config.cehorpa.guardias + idx, 'MADRUGA'));
             remainingVerdesList.forEach((verde) => {
                 if (verde.effectiveCenter === 'CEHORPA') injectVerdeLegacy(cehorpaList, verde.name, cehorpaList.length, 'RESTO');
@@ -812,7 +822,11 @@
                 if (index === lastNormalIndex) processed.specialLabel = 'PUNTO';
                 return processed;
             });
-            const apoyo = cehorpaList.map((person) => processPerson(person, 'APOYO', config.cortijos.horaRestoCehorpa, 'CEHORPA'));
+            const verdesApoyo = remainingVerdesList
+                .filter((verde) => verde.effectiveCenter === 'CEHORPA')
+                .map((verde) => ({ name: verde.name, isVerde: true }));
+            const apoyo = [...cehorpaList, ...verdesApoyo]
+                .map((person) => processPerson(person, 'APOYO', config.cortijos.horaRestoCehorpa, 'CEHORPA'));
 
             groups = [
                 { title: 'CORTIJOS - GUARDIA', color: 'bg-emerald-600 text-white', items: cG1 },
@@ -840,6 +854,7 @@
     return {
         formatLocalDate,
         parseLocalDate,
+        normalizePersonName,
         getMonday,
         differenceInCalendarDays,
         getInclusivePeriodEndDate,

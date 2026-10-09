@@ -8,6 +8,7 @@ const {
     getInclusivePeriodEndDate,
     getMonday,
     getVerdeSchedule,
+    normalizePersonName,
     normalizeConfig,
     parseLocalDate,
     recordDataChange,
@@ -86,6 +87,133 @@ test('green patterns and weekly center rotation advance from the selected start 
         role: 'MADRUGA',
         assigned: true
     });
+});
+
+test('all green cycle patterns and center rotation modes follow their selected rules', () => {
+    const weekdays = ['2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09', '2026-10-10', '2026-10-11'];
+    const expectedRoles = [
+        ['GUARDIA', null, 'MADRUGA', 'GUARDIA', null, 'MADRUGA', null],
+        ['MADRUGA', 'GUARDIA', null, 'MADRUGA', 'GUARDIA', null, null],
+        [null, 'MADRUGA', 'GUARDIA', null, 'MADRUGA', 'GUARDIA', null]
+    ];
+
+    expectedRoles.forEach((roles, cycleIndex) => {
+        const verde = {
+            startDate: '2026-10-05',
+            startCycleIndex: cycleIndex,
+            startCenter: 'CORTIJOS',
+            rotationMode: 'FIJO'
+        };
+        assert.deepEqual(
+            weekdays.map(date => getVerdeSchedule(verde, parseLocalDate(date), 'CORTIJOS').role),
+            roles
+        );
+    });
+
+    const rotation = mode => getVerdeSchedule({
+        startDate: '2026-10-05',
+        startCycleIndex: 0,
+        startCenter: 'CORTIJOS',
+        rotationMode: mode
+    }, parseLocalDate('2026-10-06'), 'CEHORPA');
+    assert.equal(rotation('SEMANAL').effectiveCenter, 'CORTIJOS');
+    assert.equal(rotation('DIARIO').effectiveCenter, 'CEHORPA');
+    assert.equal(rotation('FIJO').effectiveCenter, 'CORTIJOS');
+    assert.equal(rotation('SEGUN_GRUPO').effectiveCenter, 'CEHORPA');
+    assert.equal(getVerdeSchedule({
+        startDate: '2026-10-05',
+        startCycleIndex: 0,
+        startCenter: 'CORTIJOS',
+        rotationMode: 'SEMANAL'
+    }, parseLocalDate('2026-10-12'), 'CEHORPA').effectiveCenter, 'CEHORPA');
+});
+
+test('green schedules reject malformed dates, centers, rotation modes, and records', () => {
+    const verde = {
+        name: 'VERDE',
+        startDate: '2026-10-05',
+        startCycleIndex: 0,
+        startCenter: 'CORTIJOS',
+        rotationMode: 'FIJO'
+    };
+
+    assert.equal(getVerdeSchedule(null, parseLocalDate('2026-10-05'), 'CORTIJOS'), null);
+    assert.equal(getVerdeSchedule(verde, '2026-02-30', 'CORTIJOS'), null);
+    assert.equal(getVerdeSchedule({ ...verde, startCenter: 'OTRO' }, parseLocalDate('2026-10-05'), 'CORTIJOS'), null);
+    assert.equal(getVerdeSchedule({ ...verde, rotationMode: 'DESCONOCIDO' }, parseLocalDate('2026-10-05'), 'CORTIJOS'), null);
+    assert.equal(normalizePersonName('  álvaro '), 'ÁLVARO');
+});
+
+test('green absences match names regardless of case or surrounding whitespace', () => {
+    const collas = {
+        1: {
+            names: ['A', 'B', 'C', 'D', 'E', 'F'],
+            verdes: [{
+                name: 'VERDE',
+                startDate: '2026-10-05',
+                endDate: '',
+                startCycleIndex: 0,
+                startCenter: 'CORTIJOS',
+                rotationMode: 'FIJO'
+            }],
+            refData: { dateString: '2026-10-05', firstGuardName: 'A', center: 'CORTIJOS' },
+            absences: [{ name: '  verde ', type: 'BAJA', start: '2026-10-05', end: '' }]
+        }
+    };
+    const result = calculateSimulation(parseLocalDate('2026-10-05'), '1', collas, config);
+    const absenceGroup = result.groups.find(group => group.title === 'AUSENCIAS / BAJAS');
+
+    assert.deepEqual(absenceGroup.items, [{ name: 'VERDE', status: 'BAJA', isVerde: true }]);
+    assert.equal(result.personStatus.VERDE.status, 'BAJA');
+});
+
+test('Cehorpa green guards remain in the guardia group with fewer than three guard slots', () => {
+    const collas = {
+        2: {
+            names: ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'],
+            verdes: [{
+                name: 'VERDE',
+                startDate: '2026-10-05',
+                endDate: '',
+                startCycleIndex: 0,
+                startCenter: 'CEHORPA',
+                rotationMode: 'FIJO'
+            }],
+            refData: { dateString: '2026-10-05', firstGuardName: 'A', center: 'CEHORPA' },
+            absences: []
+        }
+    };
+    const smallCehorpa = {
+        ...config,
+        cehorpa: { ...config.cehorpa, guardias: 2 }
+    };
+    const result = calculateSimulation(parseLocalDate('2026-10-05'), '2', collas, smallCehorpa);
+
+    assert.equal(result.personStatus.VERDE.role, 'GUARDIA');
+    assert.ok(result.groups[0].items.some(person => person.name === 'VERDE'));
+});
+
+test('Cehorpa greens remain assigned to support when Cortijos is the active center', () => {
+    const collas = {
+        1: {
+            names: ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'],
+            verdes: [{
+                name: 'VERDE',
+                startDate: '2026-10-05',
+                endDate: '',
+                startCycleIndex: 0,
+                startCenter: 'CEHORPA',
+                rotationMode: 'FIJO'
+            }],
+            refData: { dateString: '2026-10-05', firstGuardName: 'A', center: 'CORTIJOS' },
+            absences: []
+        }
+    };
+    const result = calculateSimulation(parseLocalDate('2026-10-05'), '1', collas, config);
+    const supportGroup = result.groups.find(group => group.title === 'APOYO A CEHORPA');
+
+    assert.equal(result.personStatus.VERDE.role, 'APOYO');
+    assert.ok(supportGroup.items.some(person => person.name === 'VERDE' && person.isVerde));
 });
 
 test('rotation skips Sundays and supports dates beyond the old 10,000-day limit', () => {
