@@ -140,16 +140,16 @@
 
         const Header = ({ activeColla, setActiveColla, cloudStatus, cloudError, onCloudRetry, onSave, isSaving, onSettingsClick }) => (
             <>
-                <header className="bg-slate-800 text-white py-3 px-4 shadow-md sticky top-0 z-30 flex justify-between items-center shrink-0">
+                <header className="bg-slate-800 text-white py-3 px-4 shadow-md sticky top-0 z-30 flex flex-wrap justify-between items-center gap-y-2 shrink-0">
                     <div className="flex items-center gap-2">
                         <div className="bg-white/10 p-1.5 rounded-lg"><Icon path={Icons.Cal} className="w-5 h-5" /></div>
                         <h1 className="font-bold text-base tracking-tight">Simulador</h1>
                     </div>
-                    <div className="flex items-center bg-slate-700/50 rounded-lg p-1 border border-slate-600">
+                    <div className="order-3 flex w-full items-center justify-center bg-slate-700/50 rounded-lg p-1 border border-slate-600 sm:order-none sm:w-auto">
                         <button onClick={() => setActiveColla('1')} className={`px-3 py-1 rounded text-[10px] font-bold transition ${activeColla === '1' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400 hover:text-white'}`}>RAYO</button>
                         <button onClick={() => setActiveColla('2')} className={`px-3 py-1 rounded text-[10px] font-bold transition ${activeColla === '2' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400 hover:text-white'}`}>MIGUEL SEXI</button>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="ml-auto flex items-center gap-2">
                         <button
                             type="button"
                             onClick={onSave}
