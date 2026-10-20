@@ -1,0 +1,6 @@
+{
+    "deepseek.apiKey": "429c8123-ec58-4880-8082-6b31f1ca11bd",
+    "notebook.defaultFormatter": "denoland.vscode-deno",
+    "editor.defaultFormatter": "denoland.vscode-deno",
+    "editor.defaultFoldingRangeProvider": "denoland.vscode-deno"
+}

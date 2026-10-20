@@ -138,7 +138,7 @@
             );
         };
 
-        const Header = ({ activeColla, setActiveColla, cloudStatus, cloudError, onCloudRetry, onSettingsClick }) => (
+        const Header = ({ activeColla, setActiveColla, cloudStatus, cloudError, onCloudRetry, onSave, isSaving, onSettingsClick }) => (
             <>
                 <header className="bg-slate-800 text-white py-3 px-4 shadow-md sticky top-0 z-30 flex justify-between items-center shrink-0">
                     <div className="flex items-center gap-2">
@@ -150,6 +150,15 @@
                         <button onClick={() => setActiveColla('2')} className={`px-3 py-1 rounded text-[10px] font-bold transition ${activeColla === '2' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400 hover:text-white'}`}>MIGUEL SEXI</button>
                     </div>
                     <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={onSave}
+                            disabled={isSaving || cloudStatus === 'connecting'}
+                            title="Guardar todos los datos y sincronizarlos con Supabase"
+                            className="rounded bg-emerald-600 px-3 py-2 text-[10px] font-black text-white shadow-sm hover:bg-emerald-500 disabled:cursor-wait disabled:opacity-60"
+                        >
+                            {isSaving ? 'GUARDANDO…' : 'GUARDAR'}
+                        </button>
                         <button
                             type="button"
                             onClick={onCloudRetry}
@@ -413,10 +422,10 @@
             const [supabaseClient, setSupabaseClient] = useState(null);
             const [cloudStatus, setCloudStatus] = useState('connecting');
             const [cloudError, setCloudError] = useState('');
+            const [isSaving, setIsSaving] = useState(false);
             const connectionAttemptRef = React.useRef(false);
             const localChangesPendingRef = React.useRef(localStorage.getItem('turnos_pending_sync_v1') === 'true');
             const saveQueueRef = React.useRef(Promise.resolve());
-            const saveEpochRef = React.useRef(0);
             const latestLocalDraftRef = React.useRef(null);
             const importBackupInputRef = React.useRef(null);
             const currentDataRef = React.useRef(null);
@@ -564,54 +573,20 @@
 
                     const savedLocal = localStorage.getItem('turnos_data_offline_v1');
                     if (localChangesPendingRef.current && savedLocal) {
-                        const parsed = JSON.parse(savedLocal);
-                        const remoteRevision = data && data.content ? data.content.revision || '' : '';
-                        const savedBaseRevision = localStorage.getItem('turnos_remote_revision_v1') || '';
-                        if (data && data.content && remoteRevision !== savedBaseRevision) {
-                            localStorage.setItem('turnos_conflict_backup_v1', savedLocal);
-                            setConflictBackupAvailable(true);
-                            const content = data.content;
-                            if (content.collas) sanitizeAndSetCollas(content.collas);
-                            if (content.config) {
-                                const normalized = normalizeConfig(content.config, DEFAULT_CONFIG);
-                                setGlobalConfig(normalized.config);
-                            }
-                            currentDataRef.current = { collas: sanitizeCollas(content.collas), config: content.config || DEFAULT_CONFIG };
-                            applyHistoryMetadata(content);
-                            cloudRevisionRef.current = remoteRevision;
-                            localStorage.setItem('turnos_remote_revision_v1', remoteRevision);
-                            localStorage.setItem('turnos_data_offline_v1', JSON.stringify(content));
-                            setLocalChangesPending(false);
-                            showMessage('Cambios simultáneos detectados', 'Otra persona guardó cambios mientras este dispositivo estaba sin conexión. Se ha cargado la versión de Supabase y se conservaron los cambios de este dispositivo en la copia local recuperable.');
-                        } else {
-                            if (data && data.content) {
-                                let syncQuery = client
-                                    .from('shift_data')
-                                    .update({ content: parsed })
-                                    .eq('id', 'main_config');
-                                syncQuery = savedBaseRevision
-                                    ? syncQuery.filter('content->>revision', 'eq', savedBaseRevision)
-                                    : syncQuery.is('content->>revision', null);
-                                const { data: synced, error: saveError } = await syncQuery.select('id').maybeSingle();
-                                if (saveError) throw saveError;
-                                if (!synced) throw new Error('Otra persona modificó los datos durante la sincronización. No se sobrescribieron sus cambios; vuelve a conectar para resolver el conflicto.');
-                            } else {
-                                const { error: saveError } = await client
-                                    .from('shift_data')
-                                    .upsert({ id: 'main_config', content: parsed });
-                                if (saveError) throw saveError;
-                            }
-                            if (parsed.collas) sanitizeAndSetCollas(parsed.collas);
-                            if (parsed.config) {
-                                const normalized = normalizeConfig(parsed.config, DEFAULT_CONFIG);
-                                setGlobalConfig(normalized.config);
-                            }
-                            currentDataRef.current = { collas: sanitizeCollas(parsed.collas), config: parsed.config || DEFAULT_CONFIG };
-                            cloudRevisionRef.current = parsed.revision || remoteRevision;
-                            localStorage.setItem('turnos_remote_revision_v1', cloudRevisionRef.current);
-                            applyHistoryMetadata(parsed);
-                            setLocalChangesPending(false);
-                        }
+                        const pendingContent = JSON.parse(savedLocal);
+                        const { error: saveError } = await client
+                            .from('shift_data')
+                            .upsert({ id: 'main_config', content: pendingContent });
+                        if (saveError) throw saveError;
+                        if (pendingContent.collas) sanitizeAndSetCollas(pendingContent.collas);
+                        if (pendingContent.config) setGlobalConfig(normalizeConfig(pendingContent.config, DEFAULT_CONFIG).config);
+                        currentDataRef.current = { collas: sanitizeCollas(pendingContent.collas), config: pendingContent.config || DEFAULT_CONFIG };
+                        applyHistoryMetadata(pendingContent);
+                        cloudRevisionRef.current = pendingContent.revision || '';
+                        localStorage.setItem('turnos_remote_revision_v1', cloudRevisionRef.current);
+                        localStorage.setItem('turnos_data_offline_v1', JSON.stringify(pendingContent));
+                        localStorage.setItem('turnos_data_base_v1', JSON.stringify(pendingContent));
+                        setLocalChangesPending(false);
                     } else if (data && data.content) {
                         const content = data.content;
                         if (content.collas) sanitizeAndSetCollas(content.collas);
@@ -626,9 +601,10 @@
                         localStorage.setItem('turnos_remote_revision_v1', cloudRevisionRef.current);
                         applyHistoryMetadata(content);
                         localStorage.setItem('turnos_data_offline_v1', JSON.stringify(content));
+                        localStorage.setItem('turnos_data_base_v1', JSON.stringify(content));
                     } else if (savedLocal) {
                         const parsed = JSON.parse(savedLocal);
-                        const { error: saveError } = await client
+                    const { error: saveError } = await client
                             .from('shift_data')
                             .upsert({ id: 'main_config', content: parsed });
                         if (saveError) throw saveError;
@@ -703,6 +679,7 @@
                 try {
                     localStorage.setItem('turnos_remote_revision_v1', cloudRevisionRef.current);
                     localStorage.setItem('turnos_data_offline_v1', JSON.stringify(content));
+                    localStorage.setItem('turnos_data_base_v1', JSON.stringify(content));
                 } catch (error) {
                     console.error('No se pudo actualizar la copia local con los datos remotos.', error);
                     showMessage('Datos cargados con una advertencia', 'Se cargaron los datos actuales de Supabase, pero no se pudo actualizar la copia local de este dispositivo.');
@@ -715,7 +692,7 @@
                     '2': { ...nextCollasData['2'], names: Array.isArray(nextCollasData['2'].names) ? nextCollasData['2'].names : INITIAL_NAMES_COLLA2 }
                 };
                 const previousData = currentDataRef.current || { collas: collasData, config: globalConfig };
-                const dataToSave = recordDataChange(
+                let dataToSave = recordDataChange(
                     { ...previousData, changeHistory: changeHistoryRef.current, undoStack: undoStackRef.current },
                     { collas: finalCollas, config: nextConfig },
                     { collaNames: COLLA_NAMES }
@@ -738,72 +715,14 @@
                     return true;
                 }
 
-                const saveEpoch = saveEpochRef.current;
                 const saveOperation = saveQueueRef.current.then(async () => {
-                    if (saveEpoch !== saveEpochRef.current) return false;
-                    const { data: latest, error: readError } = await supabaseClient
+                    const { error } = await supabaseClient
                         .from('shift_data')
-                        .select('content')
-                        .eq('id', 'main_config')
-                        .maybeSingle();
-                    if (readError) throw readError;
-                    const remoteContent = latest && latest.content;
-                    if (remoteContent && (remoteContent.revision || '') !== cloudRevisionRef.current) {
-                        saveEpochRef.current += 1;
-                        const conflictDraft = latestLocalDraftRef.current || dataToSave;
-                        try {
-                            localStorage.setItem('turnos_conflict_backup_v1', JSON.stringify(conflictDraft));
-                            setConflictBackupAvailable(true);
-                        } catch (storageError) {
-                            showMessage('No se pudo conservar el borrador', 'Se detectaron cambios recientes en Supabase, pero el navegador no pudo guardar una copia local de tus cambios. No se sobrescribió la nube.');
-                            applyRemoteContent(remoteContent);
-                            return false;
-                        }
-                        applyRemoteContent(remoteContent);
-                        showMessage('Cambios simultáneos detectados', 'Otra persona guardó cambios mientras editabas. No se sobrescribió la nube: se cargó la versión más reciente y tu borrador quedó guardado en Configuración → Copias.');
-                        return false;
-                    }
-
-                    let writeQuery;
-                    if (!remoteContent) {
-                        const { error } = await supabaseClient
-                            .from('shift_data')
-                            .upsert({ id: 'main_config', content: dataToSave });
-                        if (error) throw error;
-                    } else {
-                        writeQuery = supabaseClient
-                            .from('shift_data')
-                            .update({ content: dataToSave })
-                            .eq('id', 'main_config');
-                        writeQuery = cloudRevisionRef.current
-                            ? writeQuery.filter('content->>revision', 'eq', cloudRevisionRef.current)
-                            : writeQuery.is('content->>revision', null);
-                        const { data: updated, error } = await writeQuery.select('id').maybeSingle();
-                        if (error) throw error;
-                        if (!updated) {
-                            saveEpochRef.current += 1;
-                            const conflictDraft = latestLocalDraftRef.current || dataToSave;
-                            const { data: latestAfterRace, error: latestError } = await supabaseClient
-                                .from('shift_data')
-                                .select('content')
-                                .eq('id', 'main_config')
-                                .maybeSingle();
-                            if (latestError) throw latestError;
-                            if (latestAfterRace && latestAfterRace.content) {
-                                try {
-                                    localStorage.setItem('turnos_conflict_backup_v1', JSON.stringify(conflictDraft));
-                                    setConflictBackupAvailable(true);
-                                } catch (storageError) {
-                                    console.error('No se pudo conservar el borrador tras una colisión remota.', storageError);
-                                }
-                                applyRemoteContent(latestAfterRace.content);
-                            }
-                            showMessage('Cambios recientes detectados', 'Otra persona guardó cambios justo antes que tú. No se sobrescribió la nube; revisa la versión actual y recupera tu borrador desde Configuración → Copias.');
-                            return false;
-                        }
-                    }
+                        .upsert({ id: 'main_config', content: dataToSave });
+                    if (error) throw error;
                     cloudRevisionRef.current = dataToSave.revision || '';
                     localStorage.setItem('turnos_remote_revision_v1', cloudRevisionRef.current);
+                    localStorage.setItem('turnos_data_base_v1', JSON.stringify(dataToSave));
                     if (latestLocalDraftRef.current === dataToSave) latestLocalDraftRef.current = null;
                     setLocalChangesPending(false);
                     return true;
@@ -818,6 +737,21 @@
                 });
                 saveQueueRef.current = saveOperation.then(() => undefined);
                 return saveOperation;
+            };
+
+            const saveCurrentDataToCloud = async () => {
+                if (isSaving) return;
+                setIsSaving(true);
+                try {
+                    if (!supabaseClient || cloudStatus !== 'connected') {
+                        showMessage('Supabase no conectado', 'Pulsa el indicador de nube para reconectar. Tus cambios siguen guardados en este dispositivo y podrás sincronizarlos al volver a conectar.');
+                        return;
+                    }
+                    const saved = await saveAllData(collasData, globalConfig);
+                    if (saved) showMessage('Guardado en Supabase', 'Todos los datos están guardados y sincronizados.');
+                } finally {
+                    setIsSaving(false);
+                }
             };
 
             const undoChange = async expectedChangeId => {
@@ -1593,7 +1527,7 @@
             // RENDER
             return (
                 <div className="min-h-screen bg-gray-50 text-gray-800 font-sans text-xs flex flex-col">
-                    <Header activeColla={activeColla} setActiveColla={setActiveColla} cloudStatus={cloudStatus} cloudError={cloudError} onCloudRetry={connectToSupabase} onSettingsClick={() => { setConfigTab('Personal'); setShowSettings(true); }} />
+                    <Header activeColla={activeColla} setActiveColla={setActiveColla} cloudStatus={cloudStatus} cloudError={cloudError} onCloudRetry={connectToSupabase} onSave={saveCurrentDataToCloud} isSaving={isSaving} onSettingsClick={() => { setConfigTab('Personal'); setShowSettings(true); }} />
                     
                     <ControlBar 
                         selectedDate={selectedDate} setSelectedDate={setSelectedDate} 
