@@ -815,7 +815,6 @@
             });
         }
 
-        const LABELS_CEHORPA_MADRUGA = ['AYUDA TRASPALETA', 'GUITAOR', 'REPONEDOR PALET'];
         let groups = [];
         if (currentCenter === 'CEHORPA') {
             const { guardias, madrugan, horaResto } = config.cehorpa;
@@ -823,12 +822,9 @@
                 .slice(0, guardias)
                 .map((person, index, list) => processPerson(person, 'GUARDIA', config.cehorpa.horaGuardia, 'CEHORPA', index + 1, false, index === list.length - 1));
             const rawG2 = cehorpaList.slice(guardias, guardias + madrugan);
-            const labeledG2 = assignLabelsToNormals(rawG2, LABELS_CEHORPA_MADRUGA);
-            const g2 = labeledG2.map((person, index) => {
-                const processed = processPerson(person, 'MADRUGA', config.cehorpa.horaMadruga, 'CEHORPA', index + 1);
-                if (person.specialLabel) processed.specialLabel = person.specialLabel;
-                return processed;
-            });
+            const g2 = rawG2.map((person, index) =>
+                processPerson(person, 'MADRUGA', config.cehorpa.horaMadruga, 'CEHORPA', index + 1)
+            );
             const g3 = cehorpaList
                 .slice(guardias + madrugan)
                 .map((person) => processPerson(person, 'RESTO', horaResto, 'CEHORPA'));
