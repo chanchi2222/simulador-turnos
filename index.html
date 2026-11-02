@@ -255,7 +255,7 @@
                                             </div>
                                             <div className="flex justify-between items-center pl-7">
                                                 <span className="text-xs font-black px-2 py-0.5 bg-slate-100 rounded border">{p.time}</span>
-                                                {p.specialLabel && (
+                                                {p.specialLabel && !(simulation.center === 'CEHORPA' && group.title === 'MADRUGAR') && (
                                                     <div className="absolute right-2 top-2 bg-yellow-100 text-yellow-800 text-[7px] font-black px-1.5 py-0.5 rounded border border-yellow-300 shadow-sm uppercase tracking-tight max-w-[80px] text-right leading-tight">
                                                         {p.specialLabel}
                                                     </div>
@@ -1380,7 +1380,7 @@
                                 else if (item.status === 'VACACIONES') text += `🏖️ ${item.name} (VACACIONES)\n`;
                                 else {
                                     if (item.special) badges += " 🟣"; if (item.isFlejador) badges += " 🛠️"; 
-                                    let labelText = item.specialLabel ? ` [${item.specialLabel}]` : "";
+                                    let labelText = item.specialLabel && !(simulation.center === 'CEHORPA' && g.title === 'MADRUGAR') ? ` [${item.specialLabel}]` : "";
                                     let displayTime = item.display ? item.display : item.time;
                                     text += `${idx + 1}. ${item.name} ${displayTime}${labelText}${badges}\n`; 
                                 }
