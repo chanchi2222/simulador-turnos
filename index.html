@@ -488,6 +488,7 @@
 
             const [newName, setNewName] = useState("");
             const [newPosition, setNewPosition] = useState(""); 
+            const [newStartDate, setNewStartDate] = useState(formatLocalDate(new Date()));
             
             const [newVerde, setNewVerde] = useState({ 
                 name: "", 
@@ -654,6 +655,7 @@
                     if (loaded) {
                         safeCollas[key] = {
                             names: Array.isArray(loaded.names) ? loaded.names : safeCollas[key].names,
+                            startDates: loaded.startDates && typeof loaded.startDates === 'object' ? loaded.startDates : {},
                             verdes: Array.isArray(loaded.verdes) ? loaded.verdes : [],
                             refData: loaded.refData || safeCollas[key].refData,
                             absences: Array.isArray(loaded.absences) ? loaded.absences : []
@@ -1042,6 +1044,7 @@
                 e.preventDefault();
                 const nameToAdd = newName.trim().toLocaleUpperCase('es-ES');
                 if (!nameToAdd) return showMessage('Falta el nombre', 'Escribe el nombre de la persona que quieres añadir.');
+                if (!parseLocalDate(newStartDate)) return showMessage('Fecha no válida', 'Selecciona una fecha de incorporación válida.');
                 const existingNames = [...names, ...verdes.map(person => person.name)];
                 if (existingNames.some(name => normalizePersonName(name) === normalizePersonName(nameToAdd))) {
                     return showMessage('Nombre duplicado', 'Esa persona ya está registrada en esta colla.');
@@ -1052,14 +1055,17 @@
                 }
                 const updatedNames = [...names];
                 updatedNames.splice(position - 1, 0, nameToAdd);
+                const updatedStartDates = { ...(activeCollaData.startDates || {}) };
+                if (newStartDate > formatLocalDate(new Date())) updatedStartDates[nameToAdd] = newStartDate;
                 const currentRefData = collasData[activeColla].refData || (activeColla === '1' ? INITIAL_REF_DATA_COLLA1 : INITIAL_REF_DATA_COLLA2);
                 const updatedRefData = updatedNames.includes(currentRefData.firstGuardName)
                     ? currentRefData
                     : { ...currentRefData, firstGuardName: updatedNames[0] };
-                const saved = await updateActiveCollaData({ names: updatedNames, refData: updatedRefData });
+                const saved = await updateActiveCollaData({ names: updatedNames, startDates: updatedStartDates, refData: updatedRefData });
                 if (!saved) return;
                 setNewName("");
                 setNewPosition("");
+                setNewStartDate(formatLocalDate(new Date()));
             };
             
             const handleRemoveName = (idx) => { 
@@ -1071,6 +1077,8 @@
                     onConfirm: async () => {
                         const removedName = names[idx];
                         const updatedNames = names.filter((_, i) => i !== idx); 
+                        const updatedStartDates = { ...(collasData[activeColla].startDates || {}) };
+                        delete updatedStartDates[removedName];
                         const refData = collasData[activeColla].refData || (activeColla === '1' ? INITIAL_REF_DATA_COLLA1 : INITIAL_REF_DATA_COLLA2);
                         const updatedRefData = refData.firstGuardName === removedName
                             ? { ...refData, firstGuardName: updatedNames[0] || '' }
@@ -1078,6 +1086,7 @@
                         setModalConfig(prev => ({...prev, show: false}));
                         await updateActiveCollaData({
                             names: updatedNames,
+                            startDates: updatedStartDates,
                             refData: updatedRefData,
                             absences: (collasData[activeColla].absences || []).filter(absence => normalizePersonName(absence.name) !== normalizePersonName(removedName))
                         });
@@ -1813,7 +1822,7 @@
                                 </div>
                                 <div className="mt-4 pt-4 border-t border-red-100"><h4 className="text-xs font-bold text-red-400 uppercase tracking-widest mb-3">Ausencias Registradas</h4>{activeAbsencesList.length > 0 ? (<div className="space-y-2">{activeAbsencesList.map((item, idx) => { const isActive = !item.end; return (<div key={idx} className="flex justify-between items-center bg-white p-2 rounded border border-red-100 text-xs"><div className="flex flex-col"><div className="flex items-center gap-2"><span className="font-bold text-gray-800">{item.name}</span><span className={`px-1.5 rounded text-[9px] font-bold ${item.status === 'BAJA' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>{item.status}</span></div><span className="font-mono text-gray-500 text-[10px]">Desde {item.start} {item.end ? `hasta ${item.end}` : '(En curso)'}</span><span className="text-[9px] text-gray-400 italic">{item.shiftsRotation ? 'Corre turno' : 'No corre turno'}</span></div><div className="flex gap-2">{isActive && <button onClick={() => handleEndAbsence(item.id)} className="text-white bg-green-500 hover:bg-green-600 px-2 py-1 rounded text-[9px] font-bold">DAR ALTA</button>}<button onClick={() => handleDeleteAbsence(item.id)} className="text-red-400 hover:text-red-600 p-1"><Icon path={Icons.Trash} className="w-4 h-4" /></button></div></div>)})}</div>) : (<p className="text-xs text-gray-400 italic text-center">No hay ausencias registradas.</p>)}</div>
                             </div>
-                            <div className={`${configTab !== 'Personal' ? 'hidden ' : ''}bg-white rounded-xl shadow-sm border border-slate-200 p-6`}><h3 className="text-xl font-bold text-slate-800 mb-6 border-b pb-2 flex items-center gap-2"><Icon path={Icons.Users} className="w-6 h-6" /> GESTIÓN DE PERSONAL ({COLLA_NAMES[activeColla]})</h3><form onSubmit={handleAddName} className="flex gap-3 mb-6"><input type="text" placeholder="Nuevo Nombre..." className="flex-1 border-2 border-slate-200 rounded-lg p-3 text-lg uppercase" value={newName} onChange={(e) => setNewName(e.target.value)} /><input type="number" placeholder="POS" min="1" max={names.length + 1} className="w-16 border-2 border-slate-200 rounded-lg p-2 text-center text-sm font-bold" value={newPosition} onChange={(e) => setNewPosition(e.target.value)} /><button type="submit" className="bg-blue-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-blue-700 flex items-center gap-2 shadow-sm"><Icon path={Icons.Plus} className="w-5 h-5" /> AÑADIR</button></form><div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">{names.map((name, idx) => (<div key={idx} className="flex items-center justify-between bg-slate-50 p-2 rounded border border-slate-200 group"><div className="flex items-center gap-2 overflow-hidden"><span className="bg-slate-200 text-slate-600 text-xs font-mono w-6 h-6 flex items-center justify-center rounded-full shrink-0">{idx + 1}</span><span className="font-bold text-slate-700 truncate text-sm">{name}</span></div><button onClick={() => handleRemoveName(idx)} className="text-slate-300 hover:text-red-500 hover:bg-red-50 p-1 rounded transition"><Icon path={Icons.Trash} className="w-4 h-4" /></button></div>))}</div></div>
+                            <div className={`${configTab !== 'Personal' ? 'hidden ' : ''}bg-white rounded-xl shadow-sm border border-slate-200 p-6`}><h3 className="text-xl font-bold text-slate-800 mb-6 border-b pb-2 flex items-center gap-2"><Icon path={Icons.Users} className="w-6 h-6" /> GESTIÓN DE PERSONAL ({COLLA_NAMES[activeColla]})</h3><form onSubmit={handleAddName} className="flex flex-wrap gap-3 mb-6"><input type="text" placeholder="Nuevo Nombre..." className="flex-1 min-w-40 border-2 border-slate-200 rounded-lg p-3 text-lg uppercase" value={newName} onChange={(e) => setNewName(e.target.value)} /><input type="number" placeholder="POS" min="1" max={names.length + 1} className="w-16 border-2 border-slate-200 rounded-lg p-2 text-center text-sm font-bold" value={newPosition} onChange={(e) => setNewPosition(e.target.value)} /><label className="flex items-center gap-2 text-xs font-bold text-slate-500">INCORPORACIÓN<input type="date" className="border-2 border-slate-200 rounded-lg p-2 font-mono text-sm" value={newStartDate} onChange={e => setNewStartDate(e.target.value)} /></label><button type="submit" className="bg-blue-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-blue-700 flex items-center gap-2 shadow-sm"><Icon path={Icons.Plus} className="w-5 h-5" /> AÑADIR</button></form><p className="text-xs text-slate-500 -mt-3 mb-5">El personal con fecha futura queda registrado, pero entra en la rotación y en los turnos desde esa fecha.</p><div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">{names.map((name, idx) => { const startDate = activeCollaData.startDates && activeCollaData.startDates[name]; return <div key={idx} className="flex items-center justify-between bg-slate-50 p-2 rounded border border-slate-200 group"><div className="flex items-center gap-2 overflow-hidden"><span className="bg-slate-200 text-slate-600 text-xs font-mono w-6 h-6 flex items-center justify-center rounded-full shrink-0">{idx + 1}</span><div className="min-w-0"><span className="font-bold text-slate-700 truncate text-sm">{name}</span>{startDate && <div className="text-[10px] font-bold text-blue-600">Desde {startDate}</div>}</div></div><button onClick={() => handleRemoveName(idx)} className="text-slate-300 hover:text-red-500 hover:bg-red-50 p-1 rounded transition"><Icon path={Icons.Trash} className="w-4 h-4" /></button></div>; })}</div></div>
                             <div className={`${configTab !== 'Turnos' ? 'hidden ' : ''}grid grid-cols-1 lg:grid-cols-2 gap-8`}>
                                 <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
                                     <h3 className="text-xl font-bold text-blue-800 mb-6 border-b pb-2 flex items-center gap-2"><Icon path={Icons.Map} className="w-6 h-6" /> VARIABLES CEHORPA</h3>

@@ -127,8 +127,35 @@
         return new Date(utcDate.getUTCFullYear(), utcDate.getUTCMonth(), utcDate.getUTCDate());
     };
 
-    const calculateRotationHeadIndex = ({ referenceDate, targetDate, names, firstGuardName, absences }) => {
+    const calculateRotationHeadIndex = ({ referenceDate, targetDate, names, firstGuardName, absences, startDates = {} }) => {
         if (!names.length) return -1;
+        const hasScheduledStarts = names.some(name => startDates[name]);
+        if (hasScheduledStarts) {
+            const reference = new Date(referenceDate);
+            const target = new Date(targetDate);
+            reference.setHours(0, 0, 0, 0);
+            target.setHours(0, 0, 0, 0);
+            const direction = target >= reference ? 1 : -1;
+            let active = names.filter(name => !startDates[name] || startDates[name] <= formatLocalDate(reference));
+            if (!active.length) return -1;
+            let head = active.includes(firstGuardName) ? firstGuardName : active[0];
+            const cursor = new Date(reference);
+            while (cursor.getTime() !== target.getTime()) {
+                cursor.setDate(cursor.getDate() + direction);
+                const day = formatLocalDate(cursor);
+                if (direction > 0) active = names.filter(name => !startDates[name] || startDates[name] <= day);
+                else active = names.filter(name => !startDates[name] || startDates[name] <= day);
+                if (!active.length) continue;
+                if (!active.includes(head)) head = active[0];
+                if (cursor.getDay() === 0) continue;
+                for (let offset = 1; offset <= active.length; offset++) {
+                    const candidate = active[(active.indexOf(head) + direction * offset + active.length * 2) % active.length];
+                    const absence = (absences || []).find(item => item && normalizePersonName(item.name) === normalizePersonName(candidate) && item.start <= day && (item.end || '9999-12-31') >= day);
+                    if (!absence || absence.shiftsRotation === false) { head = candidate; break; }
+                }
+            }
+            return active.indexOf(head);
+        }
         const reference = new Date(referenceDate);
         const target = new Date(targetDate);
         reference.setHours(0, 0, 0, 0);
@@ -566,6 +593,7 @@
         if (!cData || !cData.names || cData.names.length === 0) return null;
 
         const cNames = cData.names;
+        const startDates = cData.startDates || {};
         const cVerdes = cData.verdes || [];
         const fallbackRefData = defaults[targetCollaId] || defaults.defaultRefData || {
             dateString: '2025-12-06',
@@ -607,13 +635,16 @@
             targetDate: safeTargetDate,
             names: cNames,
             firstGuardName: cRefData.firstGuardName,
-            absences: cAbsencesList
+            absences: cAbsencesList,
+            startDates
         });
+
+        const activeNames = cNames.filter(name => !startDates[name] || startDates[name] <= dateStr);
 
         const absentPeople = [];
         const activePeople = [];
-        for (let i = 0; i < cNames.length; i++) {
-            const name = cNames[(headStartIndex + i) % cNames.length];
+        for (let i = 0; i < activeNames.length; i++) {
+            const name = activeNames[(headStartIndex + i) % activeNames.length];
             const absence = isAbsent(name, dateStr);
             if (absence) {
                 absentPeople.push({ name, status: absence.type, isVerde: false });
@@ -751,7 +782,7 @@
         }
 
         const personStatus = {};
-        cNames.forEach((name) => { personStatus[name] = { status: 'LIBRE', time: 'L' }; });
+        activeNames.forEach((name) => { personStatus[name] = { status: 'LIBRE', time: 'L' }; });
         cVerdes.forEach((verde) => { personStatus[verde.name] = { status: 'LIBRE', time: 'L' }; });
         absentPeople.forEach((person) => {
             personStatus[person.name] = { status: person.status, name: person.name, isVerde: person.isVerde };
