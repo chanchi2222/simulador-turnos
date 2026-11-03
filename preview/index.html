@@ -1,0 +1,2049 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulador de Turnos</title>
+    
+    <!-- TAILWIND CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- REACT & REACT DOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- BABEL -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- SUPABASE JS -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="./simulator-core.js"></script>
+    
+    <style>
+        body { -webkit-tap-highlight-color: transparent; background-color: #f9fafb; }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+        .date-btn-container { position: relative; }
+        .date-input-hidden {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            opacity: 0; cursor: pointer; z-index: 20;
+        }
+        @media (max-width: 640px) {
+            body {
+                font-size: 16px;
+            }
+            body .text-xs {
+                font-size: 14px !important;
+                line-height: 1.35rem !important;
+            }
+            body .text-sm {
+                font-size: 15px !important;
+                line-height: 1.4rem !important;
+            }
+            body [class~="text-[6px]"],
+            body [class~="text-[8px]"],
+            body [class~="text-[9px]"] {
+                font-size: 10px !important;
+                line-height: 1rem !important;
+            }
+            body [class~="text-[10px]"],
+            body [class~="text-[11px]"] {
+                font-size: 12px !important;
+                line-height: 1.1rem !important;
+            }
+            body button,
+            body input,
+            body select,
+            body textarea {
+                font-size: 16px !important;
+            }
+            body button {
+                min-height: 44px;
+            }
+            body input,
+            body select,
+            body textarea {
+                min-height: 44px;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+        const { formatLocalDate, parseLocalDate, getMonday, getInclusivePeriodEndDate, calculateSimulation, validateConfig, validateDataIntegrity, recordDataChange, undoLastDataChange, normalizeConfig, normalizePersonName } = window.SimulatorCore;
+
+        // ==========================================
+        // 1. CONSTANTES, ICONOS Y HELPERS
+        // ==========================================
+        const PRECONFIGURED_URL = "https://dwccmujoouxzovbhndpx.supabase.co";
+        const PRECONFIGURED_KEY = "sb_publishable_x7wvlT-vPhu5p8i5k7Wa-Q_yb3s1slS";
+        const COLLA_NAMES = { '1': 'RAYO', '2': 'MIGUEL SEXI' };
+
+        const INITIAL_NAMES_COLLA1 = ["PERSONA 01", "PERSONA 02", "PERSONA 03", "PERSONA 04", "PERSONA 05", "PERSONA 06", "PERSONA 07", "PERSONA 08", "PERSONA 09", "PERSONA 10", "PERSONA 11", "PERSONA 12", "PERSONA 13", "PERSONA 14", "PERSONA 15", "PERSONA 16", "PERSONA 17"];
+        const INITIAL_REF_DATA_COLLA1 = { dateString: "2025-12-06", firstGuardName: "PERSONA 01", center: "CORTIJOS" };
+        const INITIAL_NAMES_COLLA2 = ["PERSONA 01", "PERSONA 02", "PERSONA 03", "PERSONA 04", "PERSONA 05", "PERSONA 06", "PERSONA 07", "PERSONA 08", "PERSONA 09", "PERSONA 10", "PERSONA 11", "PERSONA 12", "PERSONA 13", "PERSONA 14", "PERSONA 15"];
+        const INITIAL_REF_DATA_COLLA2 = { dateString: "2025-12-06", firstGuardName: "PERSONA 01", center: "CEHORPA" };
+
+        const DEFAULT_CONFIG = {
+            cehorpa: { guardias: 6, madrugan: 4, horaGuardia: "10:00", horaMadruga: "07:00", horaResto: "09:00" },
+            cortijos: { capacidad: 8, guardias: 4, intermedios: 2, madrugan: 2, horaGuardia: "10:00", horaIntermedia: "08:00", horaMadruga: "07:00", horaRestoCehorpa: "09:00" }
+        };
+
+        const Icon = ({ path, className }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>{path}</svg>
+        );
+        const Icons = {
+            Cal: <><rect width="18" height="18" x="3" y="4" rx="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></>,
+            Set: <><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.47a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.35a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></>,
+            Search: <><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></>,
+            Share: <><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"/><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"/></>,
+            Moon: <><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></>,
+            Map: <><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></>,
+            Coffee: <><path d="M10 2v2"/><path d="M14 2v2"/><path d="M16 8a1 1 0 0 1 1 1v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1h14a4 4 0 0 1 4 4v1a4 4 0 0 1-4 4h-1"/><line x1="6" x2="6" y1="2" y2="4"/></>,
+            Users: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></>,
+            Rotate: <><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></>,
+            X: <><path d="M18 6 6 18"/><path d="m6 6 12 12"/></>,
+            Plus: <><path d="M5 12h14"/><path d="M12 5v14"/></>,
+            Trash: <><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></>,
+            Arrow: <><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></>,
+            Chart: <><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></>,
+            Swap: <><path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/></>,
+            Bandage: <><path d="M14 12a2 2 0 1 0 4 0 2 2 0 0 0-4 0"/><path d="m10.24 3.96 8.8 8.8a3 3 0 0 1 0 4.24l-4.24 4.25a3 3 0 0 1-4.24 0l-8.8-8.8a3 3 0 0 1 0-4.25l4.25-4.24a3 3 0 0 1 4.24 0Z"/><path d="m18 10-8 8"/></>,
+            Leaf: <><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/></>
+        };
+
+        const ConfirmationModal = ({ show, title, message, onConfirm, onCancel, isAlert }) => {
+            if (!show) return null;
+            return (
+                <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4 animate-in fade-in duration-200">
+                    <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6 relative">
+                        <h3 className="text-lg font-bold text-gray-900 mb-2">{title}</h3>
+                        <p className="text-gray-600 mb-6 text-sm">{message}</p>
+                        <div className="flex justify-end gap-2">
+                            {!isAlert && (
+                                <button onClick={onCancel} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg font-bold text-xs hover:bg-gray-200 transition">
+                                    CANCELAR
+                                </button>
+                            )}
+                            <button onClick={onConfirm} className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-bold text-xs hover:bg-emerald-700 transition shadow-sm">
+                                {isAlert ? 'ENTENDIDO' : 'CONFIRMAR'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const Header = ({ activeColla, setActiveColla, cloudStatus, cloudError, onCloudRetry, onSave, isSaving, onSettingsClick }) => (
+            <>
+                <header className="bg-slate-800 text-white py-3 px-4 shadow-md sticky top-0 z-30 flex flex-wrap justify-between items-center gap-y-2 shrink-0">
+                    <div className="flex items-center gap-2">
+                        <div className="bg-white/10 p-1.5 rounded-lg"><Icon path={Icons.Cal} className="w-5 h-5" /></div>
+                        <h1 className="font-bold text-base tracking-tight">Simulador</h1>
+                    </div>
+                    <div className="order-3 flex w-full items-center justify-center bg-slate-700/50 rounded-lg p-1 border border-slate-600 sm:order-none sm:w-auto">
+                        <button onClick={() => setActiveColla('1')} className={`px-3 py-1 rounded text-[10px] font-bold transition ${activeColla === '1' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400 hover:text-white'}`}>RAYO</button>
+                        <button onClick={() => setActiveColla('2')} className={`px-3 py-1 rounded text-[10px] font-bold transition ${activeColla === '2' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400 hover:text-white'}`}>MIGUEL SEXI</button>
+                    </div>
+                    <div className="ml-auto flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={onSave}
+                            disabled={isSaving || cloudStatus === 'connecting'}
+                            title="Guardar todos los datos y sincronizarlos con Supabase"
+                            className="rounded bg-emerald-600 px-3 py-2 text-[10px] font-black text-white shadow-sm hover:bg-emerald-500 disabled:cursor-wait disabled:opacity-60"
+                        >
+                            {isSaving ? 'GUARDANDO…' : 'GUARDAR'}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={onCloudRetry}
+                            title={cloudError || (cloudStatus === 'connected' ? 'Sincronizado con Supabase' : 'Pulsa para volver a conectar con Supabase')}
+                            className={`rounded px-2 py-1 text-[9px] font-bold ${cloudStatus === 'connected' ? 'bg-emerald-700 text-emerald-100' : cloudStatus === 'connecting' ? 'bg-amber-600 text-white' : 'bg-red-700 text-red-100'}`}
+                        >
+                            {cloudStatus === 'connected' ? 'NUBE' : cloudStatus === 'connecting' ? 'CONECTANDO' : 'SIN CONEXIÓN'}
+                        </button>
+                        <button onClick={onSettingsClick} className="p-2 rounded-full bg-white/10 hover:bg-white/20 transition relative z-40"><Icon path={Icons.Set} className="w-5 h-5" /></button>
+                    </div>
+                </header>
+                {cloudStatus === 'error' && cloudError && (
+                    <div role="alert" className="bg-red-50 border-b border-red-200 px-4 py-2 text-center text-xs text-red-800">
+                        {cloudError}
+                    </div>
+                )}
+            </>
+        );
+
+        const ControlBar = ({ selectedDate, setSelectedDate, viewMode, setViewMode, onSearch, onStats, onShare, weekData, handlePrev, handleNext, handleToday, isToday }) => (
+            <div className="bg-white shadow-sm border-b border-gray-200 p-3 shrink-0 z-10">
+                <div className="max-w-lg mx-auto flex flex-col gap-3">
+                    <div className="flex items-stretch gap-2">
+                        <div className="flex-1 flex items-center justify-between bg-gray-50 rounded-xl p-1 border border-gray-200 relative">
+                            <button onClick={handlePrev} aria-label="Periodo anterior" className="hidden rounded-lg p-2 text-slate-500 transition hover:bg-white hover:shadow-sm active:scale-95 sm:flex sm:items-center sm:justify-center"><Icon path={Icons.Arrow} className="w-4 h-4 rotate-180" /></button>
+                            <div className="flex-1 flex flex-col items-center justify-center relative date-btn-container">
+                                <div className="flex items-center gap-1.5 bg-white px-2 py-1 rounded-lg border border-gray-100 shadow-sm">
+                                    <Icon path={Icons.Cal} className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                                    <div className="text-sm font-black text-slate-800 leading-none uppercase">
+                                            {viewMode === 'weekly' && weekData ? 
+                                                `${weekData[0].date.toLocaleDateString('es-ES', {day:'numeric', month:'short'})} - ${weekData[5].date.toLocaleDateString('es-ES', {day:'numeric', month:'short'})}`
+                                                : viewMode === 'monthly'
+                                                ? selectedDate.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })
+                                                : selectedDate.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' }).replace('.', '')
+                                            }
+                                    </div>
+                                </div>
+                                <input type="date" className="date-input-hidden" value={formatLocalDate(selectedDate)} onChange={(e) => { const date = parseLocalDate(e.target.value); if (date) setSelectedDate(date); }} />
+                            </div>
+                            <button onClick={handleNext} aria-label="Periodo siguiente" className="hidden rounded-lg p-2 text-slate-500 transition hover:bg-white hover:shadow-sm active:scale-95 sm:flex sm:items-center sm:justify-center"><Icon path={Icons.Arrow} className="w-4 h-4" /></button>
+                        </div>
+                        <button onClick={handleToday} className={`hidden px-3 rounded-xl font-bold text-white shadow-sm items-center justify-center transition active:scale-95 sm:flex ${isToday ? 'bg-green-300' : 'bg-green-500 hover:bg-green-600'}`} disabled={isToday}>HOY</button>
+                    </div>
+                    <div className="flex min-w-0 gap-2">
+                        <div className="flex bg-gray-100 p-1 rounded-lg shrink-0">
+                            <button onClick={() => setViewMode('daily')} className={`px-3 py-1.5 rounded-md text-[10px] font-bold transition ${viewMode === 'daily' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>DÍA</button>
+                            <button onClick={() => setViewMode('weekly')} className={`px-3 py-1.5 rounded-md text-[10px] font-bold transition ${viewMode === 'weekly' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>SEMANA</button>
+                            <button onClick={() => setViewMode('monthly')} className={`px-3 py-1.5 rounded-md text-[10px] font-bold transition ${viewMode === 'monthly' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>MES</button>
+                        </div>
+                        <div className="w-px bg-gray-200 mx-1"></div>
+                        <button onClick={onSearch} aria-label="Buscar turnos" title="Buscar turnos" className="min-w-0 flex-1 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 rounded-lg flex items-center justify-center gap-0 sm:gap-2 text-[10px] font-bold transition active:scale-95"><Icon path={Icons.Search} className="w-4 h-4 shrink-0" /><span className="hidden sm:inline">BUSCAR</span></button>
+                        <button onClick={onStats} aria-label="Estadísticas" title="Estadísticas" className="min-w-0 flex-1 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 rounded-lg flex items-center justify-center gap-0 sm:gap-2 text-[10px] font-bold transition active:scale-95"><Icon path={Icons.Chart} className="w-4 h-4 shrink-0" /><span className="hidden sm:inline">STATS</span></button>
+                        <button onClick={onShare} aria-label="Compartir por WhatsApp" title="Compartir por WhatsApp" className="min-w-0 flex-1 bg-green-500 text-white hover:bg-green-600 rounded-lg flex items-center justify-center gap-0 sm:gap-2 text-[10px] font-bold shadow-sm transition active:scale-95"><Icon path={Icons.Share} className="w-4 h-4 shrink-0" /><span className="hidden sm:inline">WHATSAPP</span></button>
+                    </div>
+                </div>
+            </div>
+        );
+
+        const MobileShiftOverview = ({ todayDate, todaySimulation, nextDate, nextSimulation, onSelectDate }) => {
+            const renderCard = (label, date, simulation, onClick, highlighted) => {
+                if (!date || !simulation) return null;
+                const isRestDay = simulation.isSunday;
+                const dateLabel = date.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' }).replace('.', '').toUpperCase();
+
+                return (
+                    <button
+                        key={label}
+                        type="button"
+                        onClick={onClick}
+                        aria-label={`${label}: ${dateLabel}. ${isRestDay ? 'Descanso' : `${simulation.center}. Libra ${simulation.libra}`}. Ver horario`}
+                        className={`flex min-h-[132px] flex-col items-start justify-between rounded-2xl border p-3 text-left shadow-sm transition active:scale-[0.98] ${highlighted ? 'border-emerald-700 bg-emerald-800 text-white' : 'border-slate-200 bg-white text-slate-800'}`}
+                    >
+                        <span className={`text-[10px] font-black uppercase tracking-wider ${highlighted ? 'text-emerald-100' : 'text-slate-500'}`}>{label}</span>
+                        <span className="text-xs font-bold">{dateLabel}</span>
+                        {isRestDay ? (
+                            <span className={`text-sm font-black ${highlighted ? 'text-white' : 'text-slate-500'}`}>Descanso</span>
+                        ) : (
+                            <span className="min-w-0">
+                                <span className={`block text-[10px] font-bold uppercase ${highlighted ? 'text-emerald-100' : 'text-slate-500'}`}>Centro</span>
+                                <span className="block truncate text-sm font-black">{simulation.center}</span>
+                                <span className={`mt-1 block truncate text-xs font-semibold ${highlighted ? 'text-emerald-50' : 'text-slate-600'}`}>Libra: {simulation.libra}</span>
+                            </span>
+                        )}
+                        <span className={`text-[10px] font-black uppercase ${highlighted ? 'text-emerald-100' : 'text-emerald-700'}`}>Ver horario →</span>
+                    </button>
+                );
+            };
+
+            return (
+                <section aria-label="Resumen de turnos" className="mb-2 grid grid-cols-2 gap-2 sm:hidden">
+                    {renderCard('Hoy', todayDate, todaySimulation, () => onSelectDate(todayDate), true)}
+                    {renderCard('Siguiente turno', nextDate, nextSimulation, () => onSelectDate(nextDate), false)}
+                </section>
+            );
+        };
+
+        const MobileDateNav = ({ handlePrev, handleNext, onToday, isToday, viewMode }) => {
+            const periodLabel = viewMode === 'weekly' ? 'semana' : viewMode === 'monthly' ? 'mes' : 'día';
+
+            return (
+                <nav aria-label="Navegación de fechas" className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 pt-2 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur sm:hidden" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 0.5rem)' }}>
+                    <div className="mx-auto flex max-w-lg gap-2 px-3">
+                        <button type="button" onClick={handlePrev} aria-label={`Periodo anterior: ${periodLabel}`} className="flex min-h-14 flex-1 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-700 active:bg-slate-100">
+                            <Icon path={Icons.Arrow} className="h-6 w-6 rotate-180" />
+                        </button>
+                        <button type="button" onClick={onToday} aria-label="Volver al horario de hoy" disabled={isToday && viewMode === 'daily'} className={`min-h-14 flex-[1.4] rounded-xl px-4 font-black ${isToday && viewMode === 'daily' ? 'bg-emerald-100 text-emerald-800' : 'bg-emerald-700 text-white active:bg-emerald-800'}`}>
+                            HOY
+                        </button>
+                        <button type="button" onClick={handleNext} aria-label={`Periodo siguiente: ${periodLabel}`} className="flex min-h-14 flex-1 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-700 active:bg-slate-100">
+                            <Icon path={Icons.Arrow} className="h-6 w-6" />
+                        </button>
+                    </div>
+                </nav>
+            );
+        };
+
+        const DailyView = ({ simulation }) => {
+            if (!simulation) return null;
+            if (simulation.isSunday) return (
+                <div className="flex flex-col items-center justify-center py-12 bg-white rounded shadow-sm border border-dashed border-gray-300 mt-4">
+                    <Icon path={Icons.Coffee} className="w-12 h-12 text-gray-300 mb-2" />
+                    <h2 className="text-2xl font-bold text-gray-400">Domingo</h2>
+                </div>
+            );
+
+            return (
+                <div className="space-y-2 mt-2">
+                    <div className="grid grid-cols-2 gap-2">
+                        <div className={`rounded px-3 py-3 text-white flex justify-between items-center shadow-sm ${simulation.center === 'CORTIJOS' ? 'bg-gradient-to-r from-emerald-600 to-emerald-500' : 'bg-gradient-to-r from-blue-600 to-blue-500'}`}>
+                            <div><p className="text-[10px] font-black opacity-80 uppercase">Centro</p><h2 className="text-xl font-bold leading-none">{simulation.center}</h2></div>
+                            <Icon path={Icons.Map} className="w-6 h-6 opacity-40" />
+                        </div>
+                        <div className="rounded px-3 py-3 bg-white border border-red-100 flex justify-between items-center shadow-sm">
+                            <div><p className="text-[10px] font-black text-red-400 uppercase">Libra Hoy</p><h2 className="text-xl font-bold text-gray-800 leading-none">{simulation.libra}</h2></div>
+                            <Icon path={Icons.Moon} className="w-6 h-6 text-red-200" />
+                        </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 items-start">
+                        {simulation.groups.map((group, idx) => (
+                            <div key={idx} className="bg-white rounded-lg shadow-sm border border-slate-100 overflow-hidden">
+                                <div className={`px-2 py-1.5 text-[10px] font-black uppercase flex justify-between ${group.color}`}>
+                                    <span>{group.title}</span><span className="bg-black/20 px-1.5 rounded text-white">{group.items.length}</span>
+                                </div>
+                                <div className="divide-y divide-slate-100">
+                                    {group.items.map((p, i) => (
+                                        <div key={i} className={`px-2 py-2 flex flex-col relative ${p.status === 'BAJA' ? 'bg-red-50' : p.status === 'VACACIONES' ? 'bg-green-50' : 'bg-white'}`}>
+                                            {p.status === 'BAJA' && <div className="absolute inset-0 flex items-center justify-center text-red-300 font-black opacity-20 text-3xl rotate-[-10deg] pointer-events-none">BAJA</div>}
+                                            {p.status === 'VACACIONES' && <div className="absolute inset-0 flex items-center justify-center text-green-300 font-black opacity-20 text-2xl rotate-[-10deg] pointer-events-none">VACACIONES</div>}
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <span className="bg-slate-200 text-slate-700 text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full">{p.rank || '-'}</span>
+                                                <span className={`text-sm font-bold truncate ${p.isVerde ? 'text-green-700' : 'text-slate-800'}`}>{p.name} {p.isVerde && '🌿'}</span>
+                                            </div>
+                                            <div className="flex justify-between items-center pl-7">
+                                                <span className="text-xs font-black px-2 py-0.5 bg-slate-100 rounded border">{p.time}</span>
+                                                {p.specialLabel && !(simulation.center === 'CEHORPA' && group.title === 'MADRUGAR') && (
+                                                    <div className="absolute right-2 top-2 bg-yellow-100 text-yellow-800 text-[7px] font-black px-1.5 py-0.5 rounded border border-yellow-300 shadow-sm uppercase tracking-tight max-w-[80px] text-right leading-tight">
+                                                        {p.specialLabel}
+                                                    </div>
+                                                )}
+                                                <div className="flex gap-1">
+                                                    {p.special && <span className="text-[8px] bg-purple-100 text-purple-800 px-1 rounded font-bold border border-purple-200 shadow-sm">PUNTO</span>}
+                                                    {p.isFlejador && <span className="text-[8px] bg-indigo-100 text-indigo-800 px-1 rounded font-bold border border-indigo-200 shadow-sm">FLEJA</span>}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        const WeeklyView = ({ weekData, names, verdes }) => {
+            const getCellClass = (info) => {
+                if(!info) return '';
+                if(info.status === 'LIBRE') return 'bg-gray-300 text-gray-800 font-bold'; 
+                if(info.status === 'BAJA') return 'bg-red-600 text-white font-bold border-r border-red-700'; 
+                if(info.status === 'VACACIONES') return 'bg-green-600 text-white font-bold border-r border-green-700'; 
+                if(info.role && info.role.includes('GUARDIA')) return 'bg-emerald-600 text-white font-bold border-r border-emerald-700';
+                if(info.role && info.role.includes('MADRUGA')) return 'bg-orange-500 text-white font-bold border-r border-orange-600';
+                if(info.role && info.role.includes('INTERMEDIO')) return 'bg-yellow-500 text-black font-bold border-r border-yellow-600';
+                return 'bg-blue-600 text-white font-bold border-r border-blue-700'; 
+            };
+
+            const getCellContent = (info) => {
+                if(!info) return '';
+                if(info.status === 'LIBRE') return <span className="text-[10px]">LIBRE</span>;
+                if(info.status === 'BAJA') return <span className="text-[10px] block">BAJA</span>;
+                if(info.status === 'VACACIONES') return <span className="text-[10px] block">VACAS</span>;
+                return (
+                    <div className="flex flex-col items-center justify-center h-full">
+                        <span className="text-xs font-black leading-none">{info.display}</span>
+                        {info.specialLabel && <span className="text-[6px] uppercase tracking-tighter leading-none mt-0.5">{info.specialLabel.split(' ')[0]}</span>}
+                        <div className="flex gap-0.5 mt-0.5">
+                            {info.isFlejador && <span className="text-[8px] bg-black/30 px-1 rounded font-bold">F</span>}
+                            {info.special && <span className="text-[8px] bg-black/30 px-1 rounded font-bold">P</span>}
+                        </div>
+                    </div>
+                );
+            };
+
+            if (!weekData) return null;
+
+            return (
+                <div className="flex-1 bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden flex flex-col max-h-[75vh] mt-2">
+                    <div className="overflow-auto flex-1 scrollbar-hide">
+                        <table className="w-full text-left border-collapse">
+                            <thead className="bg-slate-100 sticky top-0 z-10 shadow-sm">
+                                <tr>
+                                    <th className="p-2 text-[10px] font-black text-slate-600 uppercase border-b border-r bg-slate-100 sticky left-0 z-20 min-w-[80px] shadow-md">Nombre</th>
+                                    {weekData.map((d, i) => (
+                                        <th key={i} className="p-2 text-center border-b min-w-[70px] bg-gray-50">
+                                            <div className="flex flex-col items-center"><span className="text-[9px] font-bold text-slate-500">{d.shortName} <span className="text-slate-900 text-[11px]">{d.date.getDate()}</span></span><span className={`text-[8px] font-black px-1.5 rounded-full ${d.center==='CORTIJOS'?'bg-emerald-100 text-emerald-700':'bg-blue-100 text-blue-700'}`}>{d.center==='CORTIJOS'?'COR':'CEH'}</span></div>
+                                        </th>
+                                    ))}
+                                    <th className="p-2 text-center border-b bg-gray-100 min-w-[30px] text-[9px] font-bold text-slate-500">T</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                                {verdes.length > 0 && <tr className="bg-green-50"><td colSpan={8} className="p-1 text-xs font-bold text-green-800 text-center border-b border-green-100">🌿 LOS VERDES</td></tr>}
+                                {names.map((name, idx) => {
+                                    const daysWorked = weekData.filter(d => d.data[name]?.status === 'WORK').length;
+                                    return (
+                                    <tr key={name} className={idx%2===0?'bg-white':'bg-slate-50'}>
+                                        <td className="p-2 text-[10px] font-bold text-slate-800 border-r sticky left-0 z-10 bg-inherit shadow-md truncate max-w-[90px]">{name}</td>
+                                        {weekData.map((d, i) => {
+                                            const info = d.data[name];
+                                            return <td key={i} className={`p-1 text-center border-r border-slate-100 ${getCellClass(info)}`}>{getCellContent(info)}</td>;
+                                        })}
+                                        <td className="text-center font-bold text-xs bg-gray-50 text-slate-400 border-l">{daysWorked}</td>
+                                    </tr>
+                                )})}
+                                {verdes.map((v, idx) => {
+                                    const daysWorked = weekData.filter(d => d.data[v.name]?.status === 'WORK').length;
+                                    return (
+                                    <tr key={v.name} className="bg-green-50/50">
+                                        <td className="p-2 text-[10px] font-bold text-green-900 border-r sticky left-0 z-10 bg-green-50 shadow-md truncate max-w-[90px]">{v.name} 🌿</td>
+                                        {weekData.map((d, i) => {
+                                            const info = d.data[v.name];
+                                                return <td key={i} className={`p-1 text-center border-r border-green-100 ${getCellClass(info)}`}>{getCellContent(info)}</td>;
+                                        })}
+                                        <td className="text-center font-bold text-xs bg-green-100/50 text-green-700 border-l">{daysWorked}</td>
+                                    </tr>
+                                )})}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            );
+        };
+
+        const MonthlyView = ({ monthData, selectedDate, onSelectDate }) => {
+            if (!monthData) return null;
+            const weekDays = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
+            const monthLabel = selectedDate.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+
+            const getDayTone = (day) => {
+                if (!day) return 'bg-transparent border-transparent';
+                if (day.isSunday) return 'bg-slate-100 border-slate-200 text-slate-400';
+                return day.center === 'CORTIJOS'
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
+                    : 'bg-blue-50 border-blue-200 text-blue-950';
+            };
+
+            return (
+                <div className="mt-2 bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                    <div className="px-3 py-2 border-b bg-slate-50 flex items-center justify-between">
+                        <h2 className="text-sm font-black text-slate-800 uppercase">{monthLabel}</h2>
+                        <div className="flex items-center gap-2 text-[10px] font-bold">
+                            <span className="inline-flex items-center gap-1 text-emerald-700"><span className="w-2 h-2 rounded-full bg-emerald-500"></span>COR</span>
+                            <span className="inline-flex items-center gap-1 text-blue-700"><span className="w-2 h-2 rounded-full bg-blue-500"></span>CEH</span>
+                        </div>
+                    </div>
+                    <div className="grid grid-cols-7 bg-slate-100 border-b border-slate-200">
+                        {weekDays.map(day => <div key={day} className="py-1 text-center text-[10px] font-black text-slate-500">{day}</div>)}
+                    </div>
+                    <div className="grid grid-cols-7 gap-px bg-slate-200">
+                        {monthData.map((day, index) => (
+                            <button
+                                key={day ? formatLocalDate(day.date) : `empty-${index}`}
+                                type="button"
+                                disabled={!day}
+                                onClick={() => day && onSelectDate(day.date)}
+                                className={`min-h-[76px] p-1 text-left border flex flex-col justify-between ${getDayTone(day)} ${day ? 'hover:ring-2 hover:ring-slate-400 hover:z-10 transition' : ''}`}
+                            >
+                                {day && (
+                                    <>
+                                        <div className="flex items-start justify-between gap-1">
+                                            <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black ${day.isToday ? 'bg-slate-900 text-white' : 'bg-white/80 text-slate-800'}`}>{day.date.getDate()}</span>
+                                            {!day.isSunday && <span className={`text-[8px] font-black px-1 rounded ${day.center === 'CORTIJOS' ? 'bg-emerald-600 text-white' : 'bg-blue-600 text-white'}`}>{day.center === 'CORTIJOS' ? 'COR' : 'CEH'}</span>}
+                                        </div>
+                                        {day.isSunday ? (
+                                            <div className="text-center text-[10px] font-black text-slate-400">DOM</div>
+                                        ) : (
+                                            <div className="space-y-1">
+                                                <div className="truncate text-[10px] font-black text-red-600">{day.libra}</div>
+                                                <div className="grid grid-cols-3 gap-1 text-center">
+                                                    <span className="rounded bg-emerald-600 text-white text-[9px] font-black">{day.guardias}</span>
+                                                    <span className="rounded bg-orange-500 text-white text-[9px] font-black">{day.madrugan}</span>
+                                                    <span className={`rounded text-[9px] font-black ${day.ausencias ? 'bg-red-500 text-white' : 'bg-white/70 text-slate-400'}`}>{day.ausencias}</span>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [selectedDate, setSelectedDate] = useState(new Date());
+            const [activeColla, setActiveColla] = useState('1'); 
+            const [globalConfig, setGlobalConfig] = useState(DEFAULT_CONFIG);
+            const [supabaseClient, setSupabaseClient] = useState(null);
+            const [cloudStatus, setCloudStatus] = useState('connecting');
+            const [cloudError, setCloudError] = useState('');
+            const [isSaving, setIsSaving] = useState(false);
+            const connectionAttemptRef = React.useRef(false);
+            const localChangesPendingRef = React.useRef(localStorage.getItem('turnos_pending_sync_v1') === 'true');
+            const saveQueueRef = React.useRef(Promise.resolve());
+            const latestLocalDraftRef = React.useRef(null);
+            const importBackupInputRef = React.useRef(null);
+            const currentDataRef = React.useRef(null);
+            const changeHistoryRef = React.useRef([]);
+            const undoStackRef = React.useRef([]);
+            const cloudRevisionRef = React.useRef(localStorage.getItem('turnos_remote_revision_v1') || '');
+            const [changeHistory, setChangeHistory] = useState([]);
+            const [undoStack, setUndoStack] = useState([]);
+            const [importPreview, setImportPreview] = useState(null);
+            const [conflictBackupAvailable, setConflictBackupAvailable] = useState(Boolean(localStorage.getItem('turnos_conflict_backup_v1')));
+            const [preImportBackup, setPreImportBackup] = useState(() => {
+                try {
+                    const stored = localStorage.getItem('turnos_pre_import_backup_v1');
+                    return stored ? JSON.parse(stored) : null;
+                } catch (error) {
+                    console.error('No se pudo leer la copia automática previa a la importación.', error);
+                    return null;
+                }
+            });
+            const setLocalChangesPending = pending => {
+                localChangesPendingRef.current = pending;
+                try {
+                    if (pending) localStorage.setItem('turnos_pending_sync_v1', 'true');
+                    else localStorage.removeItem('turnos_pending_sync_v1');
+                    if (pending) localStorage.setItem('turnos_remote_revision_v1', cloudRevisionRef.current);
+                } catch (error) {
+                    console.error('No se pudo guardar el estado de sincronización local.', error);
+                }
+            };
+            const [collasData, setCollasData] = useState({
+                '1': { names: INITIAL_NAMES_COLLA1, verdes: [], refData: INITIAL_REF_DATA_COLLA1, absences: [] },
+                '2': { names: INITIAL_NAMES_COLLA2, verdes: [], refData: INITIAL_REF_DATA_COLLA2, absences: [] }
+            });
+
+            // MODAL STATE
+            const [modalConfig, setModalConfig] = useState({ show: false, title: '', message: '', onConfirm: null, isAlert: false });
+
+            const activeCollaData = collasData[activeColla] || { names: [], verdes: [], refData: {}, absences: [] };
+            const names = Array.isArray(activeCollaData.names) ? activeCollaData.names : (activeColla === '1' ? INITIAL_NAMES_COLLA1 : INITIAL_NAMES_COLLA2);
+            const verdes = activeCollaData.verdes || [];
+            const refData = (activeCollaData.refData && activeCollaData.refData.dateString) ? activeCollaData.refData : (activeColla === '1' ? INITIAL_REF_DATA_COLLA1 : INITIAL_REF_DATA_COLLA2);
+            const absences = activeCollaData.absences || []; 
+            const activeAbsencesList = absences.map(a => ({ ...a, status: a.type })).sort((a,b) => a.start.localeCompare(b.start));
+
+            const [viewMode, setViewMode] = useState('daily');
+            const [showSettings, setShowSettings] = useState(false);
+            const [showSearch, setShowSearch] = useState(false);
+            const [showStats, setShowStats] = useState(false);
+            const [configTab, setConfigTab] = useState('Personal');
+            const [simulation, setSimulation] = useState(null);
+            const [monthlyStats, setMonthlyStats] = useState(null);
+            
+            const [searchType, setSearchType] = useState('person');
+            const [searchPerson, setSearchPerson] = useState("");
+            const [searchDateQuery, setSearchDateQuery] = useState(formatLocalDate(new Date()));
+            const [searchStartDate, setSearchStartDate] = useState(formatLocalDate(new Date()));
+            const [searchEndDate, setSearchEndDate] = useState(formatLocalDate(new Date()));
+            const [searchRange, setSearchRange] = useState(7);
+            const [searchResults, setSearchResults] = useState(null);
+
+            const [newName, setNewName] = useState("");
+            const [newPosition, setNewPosition] = useState(""); 
+            const [newStartDate, setNewStartDate] = useState(formatLocalDate(new Date()));
+            
+            const [newVerde, setNewVerde] = useState({ 
+                name: "", 
+                startDate: formatLocalDate(new Date()),
+                startCycleIndex: 0,
+                startCenter: "CORTIJOS",
+                rotationMode: "SEMANAL", 
+                endDate: "",
+                periodMode: "WEEK"
+            });
+
+            const [transferName, setTransferName] = useState("");
+            const [transferPos, setTransferPos] = useState(1);
+            const [absenceForm, setAbsenceForm] = useState({ name: '', type: 'BAJA', start: formatLocalDate(new Date()), end: '', shiftsRotation: true });
+            const [tempConfig, setTempConfig] = useState(null);
+            const [tempRefData, setTempRefData] = useState(null);
+            const [transferSource, setTransferSource] = useState('1');
+
+            const dataAlerts = useMemo(() => {
+                const alertCollasData = showSettings && tempRefData
+                    ? { ...collasData, [activeColla]: { ...collasData[activeColla], refData: tempRefData } }
+                    : collasData;
+                const alertConfig = showSettings && tempConfig ? tempConfig : globalConfig;
+                return validateDataIntegrity(alertCollasData, alertConfig, { collaNames: COLLA_NAMES });
+            }, [collasData, globalConfig, showSettings, tempConfig, tempRefData, activeColla]);
+            const criticalAlerts = dataAlerts.filter(alert => alert.severity === 'error');
+            const warningAlerts = dataAlerts.filter(alert => alert.severity === 'warning');
+            const alertSummary = [
+                criticalAlerts.length ? `${criticalAlerts.length} ${criticalAlerts.length === 1 ? 'error' : 'errores'}` : '',
+                warningAlerts.length ? `${warningAlerts.length} ${warningAlerts.length === 1 ? 'aviso' : 'avisos'}` : ''
+            ].filter(Boolean).join(' · ') || 'OK';
+
+            const showMessage = (title, message) => setModalConfig({
+                show: true,
+                title,
+                message,
+                isAlert: true,
+                onConfirm: () => setModalConfig(prev => ({ ...prev, show: false }))
+            });
+
+            const applyHistoryMetadata = content => {
+                const history = Array.isArray(content && content.changeHistory) ? content.changeHistory : [];
+                const stack = Array.isArray(content && content.undoStack) ? content.undoStack : [];
+                changeHistoryRef.current = history;
+                undoStackRef.current = stack;
+                setChangeHistory(history);
+                setUndoStack(stack);
+            };
+
+            useEffect(() => {
+                try {
+                    const savedLocal = localStorage.getItem('turnos_data_offline_v1');
+                    if (!savedLocal) return;
+                    const parsed = JSON.parse(savedLocal);
+                    if (parsed.collas) sanitizeAndSetCollas(parsed.collas);
+                    if (parsed.config) {
+                        const normalized = normalizeConfig(parsed.config, DEFAULT_CONFIG);
+                        setGlobalConfig(normalized.config);
+                        if (normalized.errors.length) showMessage('Configuración inválida', 'Se han detectado valores no válidos en los datos locales. Se cargarán los valores predeterminados.');
+                        else if (normalized.adjustedIntermedios) showMessage('Configuración ajustada', 'Se ha actualizado el número de intermedios para completar la capacidad de Cortijos.');
+                    }
+                    currentDataRef.current = { collas: sanitizeCollas(parsed.collas), config: parsed.config || DEFAULT_CONFIG };
+                    applyHistoryMetadata(parsed);
+                } catch (error) {
+                    showMessage('Error al cargar datos locales', 'No se pudieron leer los datos guardados en este navegador.');
+                }
+            }, []);
+
+            const connectToSupabase = async () => {
+                if (connectionAttemptRef.current) return;
+                connectionAttemptRef.current = true;
+                setCloudStatus('connecting');
+                setCloudError('');
+                try {
+                    if (!window.supabase) throw new Error('No se pudo cargar la librería de Supabase.');
+                    const client = window.supabase.createClient(PRECONFIGURED_URL, PRECONFIGURED_KEY);
+                    const { data, error } = await client
+                        .from('shift_data')
+                        .select('content')
+                        .eq('id', 'main_config')
+                        .maybeSingle();
+                    if (error) throw error;
+
+                    const savedLocal = localStorage.getItem('turnos_data_offline_v1');
+                    if (localChangesPendingRef.current && savedLocal) {
+                        const pendingContent = JSON.parse(savedLocal);
+                        const { error: saveError } = await client
+                            .from('shift_data')
+                            .upsert({ id: 'main_config', content: pendingContent });
+                        if (saveError) throw saveError;
+                        if (pendingContent.collas) sanitizeAndSetCollas(pendingContent.collas);
+                        if (pendingContent.config) setGlobalConfig(normalizeConfig(pendingContent.config, DEFAULT_CONFIG).config);
+                        currentDataRef.current = { collas: sanitizeCollas(pendingContent.collas), config: pendingContent.config || DEFAULT_CONFIG };
+                        applyHistoryMetadata(pendingContent);
+                        cloudRevisionRef.current = pendingContent.revision || '';
+                        localStorage.setItem('turnos_remote_revision_v1', cloudRevisionRef.current);
+                        localStorage.setItem('turnos_data_offline_v1', JSON.stringify(pendingContent));
+                        localStorage.setItem('turnos_data_base_v1', JSON.stringify(pendingContent));
+                        setLocalChangesPending(false);
+                    } else if (data && data.content) {
+                        const content = data.content;
+                        if (content.collas) sanitizeAndSetCollas(content.collas);
+                        if (content.config) {
+                            const normalized = normalizeConfig(content.config, DEFAULT_CONFIG);
+                            setGlobalConfig(normalized.config);
+                            if (normalized.errors.length) showMessage('Configuración inválida', 'La configuración recibida de Supabase no es válida; se cargaron los valores predeterminados.');
+                            else if (normalized.adjustedIntermedios) showMessage('Configuración ajustada', 'Se ajustó el número de intermedios para completar la capacidad de Cortijos.');
+                        }
+                        currentDataRef.current = { collas: sanitizeCollas(content.collas), config: content.config || DEFAULT_CONFIG };
+                        cloudRevisionRef.current = content.revision || '';
+                        localStorage.setItem('turnos_remote_revision_v1', cloudRevisionRef.current);
+                        applyHistoryMetadata(content);
+                        localStorage.setItem('turnos_data_offline_v1', JSON.stringify(content));
+                        localStorage.setItem('turnos_data_base_v1', JSON.stringify(content));
+                    } else if (savedLocal) {
+                        const parsed = JSON.parse(savedLocal);
+                    const { error: saveError } = await client
+                            .from('shift_data')
+                            .upsert({ id: 'main_config', content: parsed });
+                        if (saveError) throw saveError;
+                        if (parsed.collas) sanitizeAndSetCollas(parsed.collas);
+                        if (parsed.config) {
+                            const normalized = normalizeConfig(parsed.config, DEFAULT_CONFIG);
+                            setGlobalConfig(normalized.config);
+                        }
+                        currentDataRef.current = { collas: sanitizeCollas(parsed.collas), config: parsed.config || DEFAULT_CONFIG };
+                        cloudRevisionRef.current = parsed.revision || '';
+                        localStorage.setItem('turnos_remote_revision_v1', cloudRevisionRef.current);
+                        applyHistoryMetadata(parsed);
+                        setLocalChangesPending(false);
+                    } else {
+                        currentDataRef.current = {
+                            collas: sanitizeCollas(collasData),
+                            config: globalConfig
+                        };
+                        cloudRevisionRef.current = '';
+                    }
+
+                    setSupabaseClient(client);
+                    setCloudStatus('connected');
+                } catch (error) {
+                    setSupabaseClient(null);
+                    setCloudStatus('error');
+                    const reason = error && error.message ? ` Detalle: ${error.message}` : '';
+                    const message = `No se pudo conectar con Supabase. Revisa las políticas anon de shift_data. Puedes reintentar pulsando el indicador de nube.${reason}`;
+                    setCloudError(message);
+                    showMessage('Supabase no conectado', `La aplicación seguirá guardando en este navegador. ${message}`);
+                } finally {
+                    connectionAttemptRef.current = false;
+                }
+            };
+
+            useEffect(() => {
+                connectToSupabase();
+            }, []);
+
+            const sanitizeCollas = (loadedCollas) => {
+                const safeCollas = {
+                    '1': { names: INITIAL_NAMES_COLLA1, verdes: [], refData: INITIAL_REF_DATA_COLLA1, absences: [] },
+                    '2': { names: INITIAL_NAMES_COLLA2, verdes: [], refData: INITIAL_REF_DATA_COLLA2, absences: [] }
+                };
+                ['1', '2'].forEach(key => {
+                    const loaded = loadedCollas && loadedCollas[key];
+                    if (loaded) {
+                        safeCollas[key] = {
+                            names: Array.isArray(loaded.names) ? loaded.names : safeCollas[key].names,
+                            startDates: loaded.startDates && typeof loaded.startDates === 'object' ? loaded.startDates : {},
+                            verdes: Array.isArray(loaded.verdes) ? loaded.verdes : [],
+                            refData: loaded.refData || safeCollas[key].refData,
+                            absences: Array.isArray(loaded.absences) ? loaded.absences : []
+                        };
+                    }
+                });
+                return safeCollas;
+            };
+
+            const sanitizeAndSetCollas = (loadedCollas) => {
+                setCollasData(sanitizeCollas(loadedCollas));
+            };
+
+            const applyRemoteContent = content => {
+                const remoteCollas = sanitizeCollas(content.collas);
+                const normalized = normalizeConfig(content.config, DEFAULT_CONFIG);
+                currentDataRef.current = { collas: remoteCollas, config: normalized.config };
+                cloudRevisionRef.current = content.revision || '';
+                setCollasData(remoteCollas);
+                setGlobalConfig(normalized.config);
+                applyHistoryMetadata(content);
+                setLocalChangesPending(false);
+                try {
+                    localStorage.setItem('turnos_remote_revision_v1', cloudRevisionRef.current);
+                    localStorage.setItem('turnos_data_offline_v1', JSON.stringify(content));
+                    localStorage.setItem('turnos_data_base_v1', JSON.stringify(content));
+                } catch (error) {
+                    console.error('No se pudo actualizar la copia local con los datos remotos.', error);
+                    showMessage('Datos cargados con una advertencia', 'Se cargaron los datos actuales de Supabase, pero no se pudo actualizar la copia local de este dispositivo.');
+                }
+            };
+
+            const saveAllData = async (nextCollasData = collasData, nextConfig = globalConfig) => {
+                const finalCollas = {
+                    '1': { ...nextCollasData['1'], names: Array.isArray(nextCollasData['1'].names) ? nextCollasData['1'].names : INITIAL_NAMES_COLLA1 },
+                    '2': { ...nextCollasData['2'], names: Array.isArray(nextCollasData['2'].names) ? nextCollasData['2'].names : INITIAL_NAMES_COLLA2 }
+                };
+                const previousData = currentDataRef.current || { collas: collasData, config: globalConfig };
+                let dataToSave = recordDataChange(
+                    { ...previousData, changeHistory: changeHistoryRef.current, undoStack: undoStackRef.current },
+                    { collas: finalCollas, config: nextConfig },
+                    { collaNames: COLLA_NAMES }
+                );
+                latestLocalDraftRef.current = dataToSave;
+                currentDataRef.current = { collas: finalCollas, config: nextConfig };
+                applyHistoryMetadata(dataToSave);
+                setCollasData(finalCollas);
+                setGlobalConfig(nextConfig);
+                try {
+                    localStorage.setItem('turnos_data_offline_v1', JSON.stringify(dataToSave));
+                } catch (error) {
+                    showMessage('Error al guardar', 'No se pudieron guardar los cambios en este navegador. Comprueba el espacio disponible y los permisos del navegador.');
+                    return false;
+                }
+
+                if (!supabaseClient || cloudStatus !== 'connected') {
+                    setLocalChangesPending(true);
+                    showMessage('Guardado solo en este dispositivo', 'Supabase no está conectado; el cambio se guardó localmente, pero todavía no se ha sincronizado con la nube.');
+                    return true;
+                }
+
+                const saveOperation = saveQueueRef.current.then(async () => {
+                    const { error } = await supabaseClient
+                        .from('shift_data')
+                        .upsert({ id: 'main_config', content: dataToSave });
+                    if (error) throw error;
+                    cloudRevisionRef.current = dataToSave.revision || '';
+                    localStorage.setItem('turnos_remote_revision_v1', cloudRevisionRef.current);
+                    localStorage.setItem('turnos_data_base_v1', JSON.stringify(dataToSave));
+                    if (latestLocalDraftRef.current === dataToSave) latestLocalDraftRef.current = null;
+                    setLocalChangesPending(false);
+                    return true;
+                }).catch(error => {
+                    setLocalChangesPending(true);
+                    setCloudStatus('error');
+                    const reason = error && error.message ? ` Detalle: ${error.message}` : '';
+                    const message = `El cambio se conservó en este navegador, pero no llegó a la nube. Pulsa el indicador de nube para reintentar.${reason}`;
+                    setCloudError(message);
+                    showMessage('Error al guardar en Supabase', message);
+                    return false;
+                });
+                saveQueueRef.current = saveOperation.then(() => undefined);
+                return saveOperation;
+            };
+
+            const saveCurrentDataToCloud = async () => {
+                if (isSaving) return;
+                setIsSaving(true);
+                try {
+                    if (!supabaseClient || cloudStatus !== 'connected') {
+                        showMessage('Supabase no conectado', 'Pulsa el indicador de nube para reconectar. Tus cambios siguen guardados en este dispositivo y podrás sincronizarlos al volver a conectar.');
+                        return;
+                    }
+                    const saved = await saveAllData(collasData, globalConfig);
+                    if (saved) showMessage('Guardado en Supabase', 'Todos los datos están guardados y sincronizados.');
+                } finally {
+                    setIsSaving(false);
+                }
+            };
+
+            const undoChange = async expectedChangeId => {
+                if (!supabaseClient || cloudStatus !== 'connected') {
+                    showMessage('Se necesita conexión', 'Conecta con Supabase para deshacer con seguridad y comprobar que nadie haya guardado cambios después.');
+                    return;
+                }
+                try {
+                    const { data, error } = await supabaseClient
+                        .from('shift_data')
+                        .select('content')
+                        .eq('id', 'main_config')
+                        .maybeSingle();
+                    if (error) throw error;
+                    if (!data || !data.content || !data.content.revision) {
+                        showMessage('No se puede comprobar el historial', 'No se encontró una revisión compartida. No se deshizo ningún cambio.');
+                        return;
+                    }
+
+                    const result = undoLastDataChange(data.content, expectedChangeId);
+                    if (!result.ok) {
+                        showMessage('No se deshizo el cambio', result.reason);
+                        return;
+                    }
+
+                    const { data: updated, error: updateError } = await supabaseClient
+                        .from('shift_data')
+                        .update({ content: result.content })
+                        .eq('id', 'main_config')
+                        .filter('content->>revision', 'eq', data.content.revision)
+                        .select('id')
+                        .maybeSingle();
+                    if (updateError) throw updateError;
+                    if (!updated) {
+                        showMessage('Cambios recientes detectados', 'Otra persona guardó cambios durante la operación. No se deshizo nada; vuelve a cargar la página y revisa el historial.');
+                        return;
+                    }
+
+                    const restoredCollas = sanitizeCollas(result.content.collas);
+                    const normalized = normalizeConfig(result.content.config, DEFAULT_CONFIG);
+                    currentDataRef.current = { collas: restoredCollas, config: normalized.config };
+                    cloudRevisionRef.current = result.content.revision || '';
+                    applyHistoryMetadata(result.content);
+                    setCollasData(restoredCollas);
+                    setGlobalConfig(normalized.config);
+                    try {
+                        localStorage.setItem('turnos_data_offline_v1', JSON.stringify(result.content));
+                        localStorage.setItem('turnos_remote_revision_v1', cloudRevisionRef.current);
+                        setLocalChangesPending(false);
+                    } catch (storageError) {
+                        console.error('El deshacer se sincronizó, pero no se pudo actualizar la copia local.', storageError);
+                        showMessage('Deshecho en la nube', 'El cambio se deshizo en Supabase, pero no se pudo actualizar la copia de este dispositivo.');
+                        return;
+                    }
+                    showMessage('Cambio deshecho', 'Se restauró la versión anterior. El deshacer también aparece en el historial.');
+                } catch (error) {
+                    const reason = error && error.message ? ` Detalle: ${error.message}` : '';
+                    showMessage('No se pudo deshacer', `No se modificó el estado compartido. Comprueba la conexión e inténtalo de nuevo.${reason}`);
+                }
+            };
+
+            const requestUndoLastChange = () => {
+                const latestChange = undoStackRef.current[undoStackRef.current.length - 1];
+                if (!latestChange) {
+                    showMessage('No hay cambios que deshacer', 'Cuando se guarde una modificación, aparecerá aquí la opción para restaurarla.');
+                    return;
+                }
+                if (!supabaseClient || cloudStatus !== 'connected') {
+                    showMessage('Se necesita conexión', 'Conecta con Supabase para deshacer con seguridad y comprobar que nadie haya guardado cambios después.');
+                    return;
+                }
+                setModalConfig({
+                    show: true,
+                    title: 'Deshacer último cambio',
+                    message: `Se restaurará el estado anterior a este cambio: ${latestChange.summary}. Si alguien ya guardó otro cambio, la app cancelará la operación para protegerlo.`,
+                    isAlert: false,
+                    onConfirm: async () => {
+                        setModalConfig(prev => ({ ...prev, show: false }));
+                        await undoChange(latestChange.id);
+                    }
+                });
+            };
+
+            const updateActiveCollaData = (updates) => {
+                const newCollas = { ...collasData, [activeColla]: { ...collasData[activeColla], ...updates } };
+                return saveAllData(newCollas, globalConfig);
+            };
+
+            const handleExportBackup = () => {
+                const backup = {
+                    version: 1,
+                    exportedAt: new Date().toISOString(),
+                    collas: collasData,
+                    config: globalConfig
+                };
+                downloadJson(backup, `simulador-turnos-backup-${formatLocalDate(new Date())}.json`);
+            };
+
+            const downloadJson = (value, filename) => {
+                const blob = new Blob([JSON.stringify(value, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = filename;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+            };
+
+            const prepareBackupContent = parsed => {
+                const content = parsed && parsed.collas ? parsed : parsed && parsed.content;
+                if (!content || !content.collas || !content.config) {
+                    throw new Error('El archivo no tiene el formato esperado.');
+                }
+                const missingData = ['1', '2'].flatMap(collaId => {
+                    const colla = content.collas[collaId];
+                    const label = COLLA_NAMES[collaId];
+                    if (!colla || typeof colla !== 'object') return [`Falta la colla ${label}.`];
+                    const errors = [];
+                    if (!Array.isArray(colla.names)) errors.push(`${label}: falta la lista de personal.`);
+                    if (!Array.isArray(colla.verdes)) errors.push(`${label}: faltan los datos de verdes.`);
+                    if (!Array.isArray(colla.absences)) errors.push(`${label}: faltan los datos de ausencias.`);
+                    if (!colla.refData || typeof colla.refData !== 'object') {
+                        errors.push(`${label}: falta el punto de partida.`);
+                    } else {
+                        if (!parseLocalDate(colla.refData.dateString)) errors.push(`${label}: la fecha del punto de partida no es válida.`);
+                        if (!['CORTIJOS', 'CEHORPA'].includes(colla.refData.center)) errors.push(`${label}: falta un centro inicial válido.`);
+                        if (colla.names && colla.names.length && !colla.names.includes(colla.refData.firstGuardName)) {
+                            errors.push(`${label}: el primer guardia no está en la lista de personal.`);
+                        }
+                    }
+                    return errors;
+                });
+                if (missingData.length) throw new Error(missingData.join(' '));
+
+                const normalized = normalizeConfig(content.config, DEFAULT_CONFIG);
+                if (normalized.errors.length) throw new Error(normalized.errors.join(' '));
+                const safeCollas = sanitizeCollas(content.collas);
+                const integrityErrors = validateDataIntegrity(safeCollas, normalized.config, { collaNames: COLLA_NAMES })
+                    .filter(problem => problem.severity === 'error');
+                if (integrityErrors.length) {
+                    throw new Error(integrityErrors.map(problem => `${problem.scope}: ${problem.message}`).join(' '));
+                }
+                return {
+                    collas: safeCollas,
+                    config: normalized.config,
+                    adjustedIntermedios: normalized.adjustedIntermedios,
+                    counts: ['1', '2'].map(collaId => ({
+                        name: COLLA_NAMES[collaId],
+                        people: safeCollas[collaId].names.length,
+                        verdes: safeCollas[collaId].verdes.length,
+                        absences: safeCollas[collaId].absences.length
+                    }))
+                };
+            };
+
+            const handleImportBackup = (event) => {
+                const file = event.target.files && event.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = async () => {
+                    try {
+                        const parsed = JSON.parse(reader.result);
+                        const preparedBackup = prepareBackupContent(parsed);
+                        setImportPreview({
+                            name: file.name,
+                            ...preparedBackup
+                        });
+                    } catch (error) {
+                        const reason = error && error.message ? ` ${error.message}` : '';
+                        showMessage('No se pudo importar', `Selecciona una copia JSON válida.${reason}`);
+                    } finally {
+                        event.target.value = '';
+                    }
+                };
+                reader.onerror = () => {
+                    showMessage('No se pudo leer', 'El navegador no pudo leer el archivo seleccionado.');
+                    event.target.value = '';
+                };
+                reader.readAsText(file);
+            };
+
+            const confirmImportBackup = async () => {
+                if (!importPreview) return;
+                const safetyBackup = {
+                    version: 1,
+                    exportedAt: new Date().toISOString(),
+                    reason: 'Copia automática antes de importar',
+                    collas: collasData,
+                    config: globalConfig
+                };
+                try {
+                    localStorage.setItem('turnos_pre_import_backup_v1', JSON.stringify(safetyBackup));
+                    setPreImportBackup(safetyBackup);
+                } catch (error) {
+                    showMessage('No se pudo crear la copia de seguridad', 'La importación se canceló para no reemplazar tus datos sin una copia previa. Libera espacio del navegador e inténtalo de nuevo.');
+                    return;
+                }
+                try {
+                    downloadJson(safetyBackup, `simulador-turnos-antes-de-importar-${formatLocalDate(new Date())}.json`);
+                } catch (error) {
+                    console.error('La copia previa quedó en el almacenamiento local, pero no se pudo descargar como archivo.', error);
+                }
+                const saved = await saveAllData(importPreview.collas, importPreview.config);
+                if (saved) {
+                    const adjusted = importPreview.adjustedIntermedios;
+                    setImportPreview(null);
+                    setShowSettings(false);
+                    showMessage('Copia restaurada', `Se creó una copia automática antes de importar. ${adjusted
+                        ? 'La copia se importó y se ajustaron los intermedios de Cortijos para cuadrar la capacidad.'
+                        : 'La copia se importó correctamente.'}`);
+                }
+            };
+
+            const requestRestorePreImportBackup = () => {
+                if (!preImportBackup) {
+                    showMessage('No hay copia previa', 'No se encontró una copia automática anterior a la última importación en este navegador.');
+                    return;
+                }
+                let preparedBackup;
+                try {
+                    preparedBackup = prepareBackupContent(preImportBackup);
+                } catch (error) {
+                    const reason = error && error.message ? ` ${error.message}` : '';
+                    showMessage('Copia automática no válida', `No se restauró nada porque la copia previa está incompleta o dañada.${reason}`);
+                    return;
+                }
+                const backupDate = preImportBackup.exportedAt && !Number.isNaN(new Date(preImportBackup.exportedAt).getTime())
+                    ? new Date(preImportBackup.exportedAt).toLocaleString('es-ES')
+                    : 'fecha desconocida';
+                setModalConfig({
+                    show: true,
+                    title: 'Restaurar copia previa',
+                    message: `Se reemplazarán los datos actuales por la copia guardada el ${backupDate}. Antes de hacerlo se descargará otra copia del estado actual. ¿Continuar?`,
+                    isAlert: false,
+                    onConfirm: async () => {
+                        setModalConfig(prev => ({ ...prev, show: false }));
+                        const beforeRestore = {
+                            version: 1,
+                            exportedAt: new Date().toISOString(),
+                            reason: 'Copia automática antes de restaurar la copia previa a una importación',
+                            collas: collasData,
+                            config: globalConfig
+                        };
+                        try {
+                            localStorage.setItem('turnos_pre_restore_backup_v1', JSON.stringify(beforeRestore));
+                        } catch (error) {
+                            showMessage('No se pudo crear la copia de seguridad', 'La restauración se canceló para proteger los datos actuales. Comprueba el espacio disponible en el navegador e inténtalo de nuevo.');
+                            return;
+                        }
+                        try {
+                            downloadJson(beforeRestore, `simulador-turnos-antes-de-restaurar-${formatLocalDate(new Date())}.json`);
+                        } catch (error) {
+                            console.error('La copia previa quedó guardada en el navegador, pero no se pudo descargar.', error);
+                        }
+
+                        const saved = await saveAllData(preparedBackup.collas, preparedBackup.config);
+                        if (!saved) return;
+                        try {
+                            localStorage.removeItem('turnos_pre_import_backup_v1');
+                            setPreImportBackup(null);
+                        } catch (error) {
+                            console.error('Los datos se restauraron, pero no se pudo retirar el aviso de la copia anterior.', error);
+                        }
+                        setShowSettings(false);
+                        showMessage('Copia restaurada', `Se recuperaron los datos guardados antes de la última importación.${preparedBackup.adjustedIntermedios
+                            ? ' Se ajustaron los intermedios de Cortijos para cuadrar la capacidad.'
+                            : ''}`);
+                    }
+                });
+            };
+
+            const exportConflictBackup = () => {
+                try {
+                    const savedDraft = localStorage.getItem('turnos_conflict_backup_v1');
+                    if (!savedDraft) {
+                        setConflictBackupAvailable(false);
+                        return showMessage('No hay borrador pendiente', 'No se encontró una copia local de cambios en conflicto.');
+                    }
+                    downloadJson(JSON.parse(savedDraft), `simulador-turnos-borrador-conflicto-${formatLocalDate(new Date())}.json`);
+                } catch (error) {
+                    showMessage('No se pudo exportar el borrador', 'La copia local de los cambios en conflicto no se pudo leer o descargar.');
+                }
+            };
+
+            const handleAddName = async (e) => {
+                e.preventDefault();
+                const nameToAdd = newName.trim().toLocaleUpperCase('es-ES');
+                if (!nameToAdd) return showMessage('Falta el nombre', 'Escribe el nombre de la persona que quieres añadir.');
+                if (!parseLocalDate(newStartDate)) return showMessage('Fecha no válida', 'Selecciona una fecha de incorporación válida.');
+                const existingNames = [...names, ...verdes.map(person => person.name)];
+                if (existingNames.some(name => normalizePersonName(name) === normalizePersonName(nameToAdd))) {
+                    return showMessage('Nombre duplicado', 'Esa persona ya está registrada en esta colla.');
+                }
+                const position = newPosition === '' ? names.length + 1 : Number(newPosition);
+                if (!Number.isInteger(position) || position < 1 || position > names.length + 1) {
+                    return showMessage('Posición no válida', `La posición debe ser un número entre 1 y ${names.length + 1}.`);
+                }
+                const updatedNames = [...names];
+                updatedNames.splice(position - 1, 0, nameToAdd);
+                const updatedStartDates = { ...(activeCollaData.startDates || {}) };
+                if (newStartDate > formatLocalDate(new Date())) updatedStartDates[nameToAdd] = newStartDate;
+                const currentRefData = collasData[activeColla].refData || (activeColla === '1' ? INITIAL_REF_DATA_COLLA1 : INITIAL_REF_DATA_COLLA2);
+                const updatedRefData = updatedNames.includes(currentRefData.firstGuardName)
+                    ? currentRefData
+                    : { ...currentRefData, firstGuardName: updatedNames[0] };
+                const saved = await updateActiveCollaData({ names: updatedNames, startDates: updatedStartDates, refData: updatedRefData });
+                if (!saved) return;
+                setNewName("");
+                setNewPosition("");
+                setNewStartDate(formatLocalDate(new Date()));
+            };
+            
+            const handleRemoveName = (idx) => { 
+                setModalConfig({
+                    show: true,
+                    title: 'Eliminar Persona',
+                    message: `¿Seguro que quieres eliminar a ${names[idx]}?`,
+                    isAlert: false,
+                    onConfirm: async () => {
+                        const removedName = names[idx];
+                        const updatedNames = names.filter((_, i) => i !== idx); 
+                        const updatedStartDates = { ...(collasData[activeColla].startDates || {}) };
+                        delete updatedStartDates[removedName];
+                        const refData = collasData[activeColla].refData || (activeColla === '1' ? INITIAL_REF_DATA_COLLA1 : INITIAL_REF_DATA_COLLA2);
+                        const updatedRefData = refData.firstGuardName === removedName
+                            ? { ...refData, firstGuardName: updatedNames[0] || '' }
+                            : refData;
+                        setModalConfig(prev => ({...prev, show: false}));
+                        await updateActiveCollaData({
+                            names: updatedNames,
+                            startDates: updatedStartDates,
+                            refData: updatedRefData,
+                            absences: (collasData[activeColla].absences || []).filter(absence => normalizePersonName(absence.name) !== normalizePersonName(removedName))
+                        });
+                    }
+                });
+            };
+            
+            const addVerde = async (e) => {
+                e.preventDefault();
+                const name = newVerde.name.trim().toLocaleUpperCase('es-ES');
+                const startDate = parseLocalDate(newVerde.startDate);
+                if (!name || !startDate) return showMessage('Datos no válidos', 'Escribe el nombre y una fecha de inicio válida para el personal especial.');
+                if (!['WEEK', 'CUSTOM', 'ONGOING'].includes(newVerde.periodMode)) {
+                    return showMessage('Duración no válida', 'Selecciona una duración válida para el periodo del personal especial.');
+                }
+                let endDateValue = '';
+                if (newVerde.periodMode === 'WEEK') {
+                    endDateValue = getInclusivePeriodEndDate(newVerde.startDate, 7);
+                    if (!endDateValue) return showMessage('Periodo no válido', 'No se pudo calcular el final de la semana seleccionada.');
+                } else if (newVerde.periodMode === 'CUSTOM') {
+                    const endDate = parseLocalDate(newVerde.endDate);
+                    if (!endDate) return showMessage('Fecha no válida', 'Selecciona una fecha final válida para el periodo.');
+                    endDateValue = formatLocalDate(endDate);
+                }
+                const endDate = endDateValue ? parseLocalDate(endDateValue) : null;
+                if (endDateValue && !endDate) {
+                    return showMessage('Fecha no válida', 'No se pudo validar el final del periodo seleccionado.');
+                }
+                if (endDate && endDate < startDate) return showMessage('Rango no válido', 'La fecha final no puede ser anterior a la fecha de inicio.');
+                if (![0, 1, 2].includes(Number(newVerde.startCycleIndex))) return showMessage('Patrón no válido', 'Selecciona un patrón de rotación inicial válido.');
+                if (!['CORTIJOS', 'CEHORPA'].includes(newVerde.startCenter) || !['SEMANAL', 'DIARIO', 'FIJO', 'SEGUN_GRUPO'].includes(newVerde.rotationMode)) {
+                    return showMessage('Configuración no válida', 'El centro o el tipo de rotación seleccionado no es válido.');
+                }
+                const existingNames = [...names, ...verdes.map(person => person.name)];
+                if (existingNames.some(personName => normalizePersonName(personName) === normalizePersonName(name))) {
+                    return showMessage('Nombre duplicado', 'Esa persona ya está registrada en esta colla.');
+                }
+                const updatedVerdes = [...verdes, {
+                    name,
+                    startDate: newVerde.startDate,
+                    endDate: endDateValue,
+                    startCycleIndex: Number(newVerde.startCycleIndex),
+                    startCenter: newVerde.startCenter,
+                    rotationMode: newVerde.rotationMode,
+                    id: Date.now()
+                }];
+                const saved = await updateActiveCollaData({ verdes: updatedVerdes });
+                if (!saved) return;
+                setNewVerde({
+                    name: "",
+                    startDate: formatLocalDate(new Date()),
+                    startCycleIndex: 0,
+                    startCenter: "CORTIJOS",
+                    rotationMode: "SEMANAL",
+                    endDate: "",
+                    periodMode: "WEEK"
+                });
+            };
+            
+            const removeVerde = (id) => { 
+                setModalConfig({
+                    show: true, title: 'Eliminar Verde', message: '¿Eliminar a este personal especial?', isAlert: false,
+                    onConfirm: async () => {
+                        const removedVerde = verdes.find(v => v.id === id);
+                        const updatedVerdes = verdes.filter(v => v.id !== id);
+                        setModalConfig(prev => ({...prev, show: false}));
+                        await updateActiveCollaData({
+                            verdes: updatedVerdes,
+                            absences: removedVerde
+                                ? (collasData[activeColla].absences || []).filter(absence => normalizePersonName(absence.name) !== normalizePersonName(removedVerde.name))
+                                : collasData[activeColla].absences || []
+                        });
+                    }
+                });
+            };
+            
+            const handleSaveAbsence = async () => {
+                const { name, type, start, shiftsRotation } = absenceForm;
+                const startDate = parseLocalDate(start);
+                const endDate = absenceForm.end ? parseLocalDate(absenceForm.end) : null;
+                const knownNames = [...names, ...verdes.map(person => person.name)];
+                if (!name || !startDate || !['BAJA', 'VACACIONES'].includes(type) || !knownNames.includes(name)) {
+                    return showMessage('Datos no válidos', 'Selecciona una persona, un tipo de ausencia y una fecha de inicio válida.');
+                }
+                if (absenceForm.end && !endDate) return showMessage('Fecha no válida', 'La fecha final de la ausencia no es válida.');
+                if (endDate && endDate < startDate) return showMessage('Rango no válido', 'La fecha final no puede ser anterior a la fecha de inicio.');
+                const rangeEnd = absenceForm.end || '9999-12-31';
+                const overlapsExisting = absences.some(absence =>
+                    absence.name === name &&
+                    start <= (absence.end || '9999-12-31') &&
+                    rangeEnd >= absence.start
+                );
+                if (overlapsExisting) return showMessage('Ausencia duplicada', 'Esta persona ya tiene una ausencia registrada en parte o en todo ese periodo.');
+
+                const newAbsence = { id: Date.now(), name, type, start, end: absenceForm.end || null, shiftsRotation };
+                const newAbsences = [...absences, newAbsence].sort((a, b) => a.start.localeCompare(b.start));
+                const saved = await updateActiveCollaData({ absences: newAbsences });
+                if (!saved) return;
+                setAbsenceForm({ name: '', type: 'BAJA', start: formatLocalDate(new Date()), end: '', shiftsRotation: true });
+                showMessage('Guardado', 'Ausencia registrada correctamente.');
+            };
+            
+            const handleEndAbsence = (id) => {
+                const today = formatLocalDate(new Date());
+                const absence = absences.find(item => item.id === id);
+                if (!absence) return showMessage('Ausencia no encontrada', 'Actualiza la pantalla y vuelve a intentarlo.');
+                if (today < absence.start) return showMessage('No se puede dar de alta', 'La ausencia empieza en una fecha futura.');
+                const newAbsences = absences.map(a => { if (a.id === id) return { ...a, end: today }; return a; });
+                updateActiveCollaData({ absences: newAbsences });
+            };
+            
+            const handleDeleteAbsence = (id) => { 
+                setModalConfig({
+                    show: true, title: 'Borrar Ausencia', message: '¿Eliminar este registro de ausencia?', isAlert: false,
+                    onConfirm: () => {
+                        const newAbsences = absences.filter(a => a.id !== id); updateActiveCollaData({ absences: newAbsences });
+                        setModalConfig(prev => ({...prev, show: false}));
+                    }
+                });
+            };
+            
+            const handleTransfer = () => {
+                if (!transferName) return setModalConfig({ show: true, title: 'Error', message: 'Selecciona a alguien.', isAlert: true, onConfirm: () => setModalConfig(prev => ({...prev, show: false})) });
+                
+                setModalConfig({
+                    show: true, title: 'Traspaso', message: `¿Mover a ${transferName} a la otra colla?`, isAlert: false,
+                    onConfirm: () => {
+                        const sourceCollaId = transferSource; const targetCollaId = transferSource === '1' ? '2' : '1';
+                        const sourceNames = [...collasData[sourceCollaId].names];
+                        const targetNames = [...collasData[targetCollaId].names];
+                        const idx = sourceNames.indexOf(transferName); 
+                        if (idx === -1) {
+                            setModalConfig(prev => ({ ...prev, show: false }));
+                            showMessage('Traspaso no realizado', 'La persona seleccionada ya no está en la colla de origen.');
+                            return;
+                        }
+                        if (targetNames.some(name => name.toLocaleUpperCase('es-ES') === transferName.toLocaleUpperCase('es-ES'))) {
+                            setModalConfig(prev => ({ ...prev, show: false }));
+                            showMessage('Traspaso no realizado', 'La persona ya está registrada en la colla de destino.');
+                            return;
+                        }
+                        sourceNames.splice(idx, 1);
+                        const pos = Number(transferPos);
+                        if (!Number.isInteger(pos) || pos < 1 || pos > targetNames.length + 1) {
+                            setModalConfig(prev => ({ ...prev, show: false }));
+                            showMessage('Posición no válida', `La posición debe ser un número entre 1 y ${targetNames.length + 1}.`);
+                            return;
+                        }
+                        targetNames.splice(pos-1, 0, transferName);
+                        const newCollasData = { ...collasData, [sourceCollaId]: {...collasData[sourceCollaId], names: sourceNames}, [targetCollaId]: {...collasData[targetCollaId], names: targetNames} };
+                        saveAllData(newCollasData, globalConfig).then(saved => {
+                            if (saved) {
+                                setTransferName("");
+                                setTransferPos(1);
+                                setModalConfig(prev => ({...prev, show: false}));
+                            }
+                        });
+                    }
+                });
+            };
+
+            useEffect(() => { if (showSettings) { setTempConfig(globalConfig); setTempRefData(refData); setTransferSource(activeColla); } }, [showSettings, globalConfig, refData, activeColla]);
+            const saveSettingsToCloud = async () => {
+                const configErrors = validateConfig(tempConfig);
+                if (configErrors.length) return showMessage('Configuración no válida', configErrors.join(' '));
+                if (!tempRefData || !parseLocalDate(tempRefData.dateString)) {
+                    return showMessage('Fecha de partida no válida', 'Selecciona una fecha válida para el punto de partida.');
+                }
+                if (names.length > 0 && !names.includes(tempRefData.firstGuardName)) {
+                    return showMessage('Primer guardia no válido', 'Selecciona como primer guardia a una persona que pertenezca a esta colla.');
+                }
+                if (!['CORTIJOS', 'CEHORPA'].includes(tempRefData.center)) {
+                    return showMessage('Centro no válido', 'Selecciona Cortijos o Cehorpa como centro inicial.');
+                }
+                const newCollas = {
+                    ...collasData,
+                    [activeColla]: { ...collasData[activeColla], refData: tempRefData }
+                };
+                const saved = await saveAllData(newCollas, tempConfig);
+                if (saved) {
+                    setShowSettings(false);
+                    showMessage('Guardado', 'La configuración y el punto de partida se guardaron correctamente.');
+                }
+            };
+
+            useEffect(() => { setSimulation(calculateSimulation(selectedDate, activeColla, collasData, globalConfig)); }, [selectedDate, globalConfig, collasData, activeColla]);
+
+            const calculateMonthlyStats = () => {
+                const year = selectedDate.getFullYear();
+                const month = selectedDate.getMonth();
+                const daysInMonth = new Date(year, month + 1, 0).getDate();
+                const stats = {};
+                [...names, ...verdes.map(v=>v.name)].forEach(n => stats[n] = { days: 0, guardia: 0, madruga: 0, baja: 0 });
+
+                for(let i=1; i<=daysInMonth; i++) {
+                    const d = new Date(year, month, i);
+                    if(d.getDay() !== 0) { 
+                        const sim = calculateSimulation(d, activeColla, collasData, globalConfig);
+                        if(sim && sim.personStatus) {
+                            Object.entries(sim.personStatus).forEach(([name, status]) => {
+                                if(stats[name]) {
+                                    if(status.status === 'WORK') {
+                                        stats[name].days++;
+                                        if(status.role && status.role.includes('GUARDIA')) stats[name].guardia++;
+                                        if(status.role && status.role.includes('MADRUGA')) stats[name].madruga++;
+                                    } else if(status.status === 'BAJA') {
+                                        stats[name].baja++;
+                                    }
+                                }
+                            });
+                        }
+                    }
+                }
+                setMonthlyStats(stats);
+                setShowStats(true);
+            };
+
+            const isToday = (d) => { const today = new Date(); return d.getDate() === today.getDate() && d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear(); };
+
+            const weekData = useMemo(() => {
+                if (!names || !names.length) return null; 
+                const monday = getMonday(selectedDate);
+                const days = [];
+                for (let i = 0; i < 6; i++) {
+                    const d = new Date(monday); d.setDate(monday.getDate() + i);
+                    const sim = calculateSimulation(d, activeColla, collasData, globalConfig);
+                    days.push({ date: d, shortName: d.toLocaleDateString('es-ES', { weekday: 'short' }).toUpperCase(), center: sim ? sim.center : '-', data: sim ? sim.personStatus : {} });
+                }
+                return days;
+            }, [selectedDate, globalConfig, collasData, activeColla, names]); 
+
+            const mobileShiftOverview = useMemo(() => {
+                const todayDate = parseLocalDate(formatLocalDate(new Date()));
+                if (!todayDate) return null;
+
+                const todaySimulation = calculateSimulation(todayDate, activeColla, collasData, globalConfig);
+                for (let offset = 1; offset <= 7; offset++) {
+                    const nextDate = new Date(todayDate);
+                    nextDate.setDate(todayDate.getDate() + offset);
+                    const nextSimulation = calculateSimulation(nextDate, activeColla, collasData, globalConfig);
+                    if (nextSimulation && !nextSimulation.isSunday) {
+                        return { todayDate, todaySimulation, nextDate, nextSimulation };
+                    }
+                }
+
+                return { todayDate, todaySimulation, nextDate: null, nextSimulation: null };
+            }, [activeColla, collasData, globalConfig]);
+
+            const monthData = useMemo(() => {
+                if (!names || !names.length) return null;
+                const year = selectedDate.getFullYear();
+                const month = selectedDate.getMonth();
+                const firstDay = new Date(year, month, 1);
+                const daysInMonth = new Date(year, month + 1, 0).getDate();
+                const leadingBlanks = (firstDay.getDay() + 6) % 7;
+                const cells = Array.from({ length: leadingBlanks }, () => null);
+
+                for (let day = 1; day <= daysInMonth; day++) {
+                    const date = new Date(year, month, day);
+                    const sim = calculateSimulation(date, activeColla, collasData, globalConfig);
+                    const statuses = sim && sim.personStatus ? Object.values(sim.personStatus) : [];
+                    cells.push({
+                        date,
+                        isToday: isToday(date),
+                        isSunday: Boolean(sim && sim.isSunday),
+                        center: sim && !sim.isSunday ? sim.center : '',
+                        libra: sim && !sim.isSunday ? sim.libra : '',
+                        guardias: statuses.filter(status => status.status === 'WORK' && status.role === 'GUARDIA').length,
+                        madrugan: statuses.filter(status => status.status === 'WORK' && status.role === 'MADRUGA').length,
+                        ausencias: statuses.filter(status => status.status === 'BAJA' || status.status === 'VACACIONES').length
+                    });
+                }
+
+                while (cells.length % 7 !== 0) cells.push(null);
+                return cells;
+            }, [selectedDate, globalConfig, collasData, activeColla, names]);
+
+            const handlePrev = () => {
+                const d = new Date(selectedDate);
+                if (viewMode === 'weekly') d.setDate(d.getDate() - 7);
+                else if (viewMode === 'monthly') { d.setDate(1); d.setMonth(d.getMonth() - 1); }
+                else d.setDate(d.getDate() - 1);
+                setSelectedDate(d);
+            };
+            const handleNext = () => {
+                const d = new Date(selectedDate);
+                if (viewMode === 'weekly') d.setDate(d.getDate() + 7);
+                else if (viewMode === 'monthly') { d.setDate(1); d.setMonth(d.getMonth() + 1); }
+                else d.setDate(d.getDate() + 1);
+                setSelectedDate(d);
+            };
+            const handleToday = () => setSelectedDate(new Date());
+            const handleMobileToday = () => {
+                setSelectedDate(new Date());
+                setViewMode('daily');
+            };
+            
+            const shareText = async (text) => { window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank'); };
+            const handleShare = () => { 
+                if (viewMode === 'daily') { 
+                    if (!simulation) return; 
+                    const dateStr = simulation.date.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }); 
+                    let text = `📅 *${dateStr.toUpperCase()}* - ${COLLA_NAMES[activeColla]}\n`; 
+                    if (simulation.isSunday) text += `☕ *DOMINGO* - Descanso\n`; 
+                    else { 
+                        text += `📍 *Centro:* ${simulation.center}\n🌙 *Libra:* ${simulation.libra}\n--------------------------------\n`; 
+                        simulation.groups.forEach(g => { 
+                            text += `\n*${g.title}* (${g.items.length})\n`; 
+                            g.items.forEach((item, idx) => { 
+                                let badges = ""; 
+                                if (item.status === 'BAJA') text += `🚑 ${item.name} (BAJA)\n`;
+                                else if (item.status === 'VACACIONES') text += `🏖️ ${item.name} (VACACIONES)\n`;
+                                else {
+                                    if (item.special) badges += " 🟣"; if (item.isFlejador) badges += " 🛠️"; 
+                                    let labelText = item.specialLabel && !(simulation.center === 'CEHORPA' && g.title === 'MADRUGAR') ? ` [${item.specialLabel}]` : "";
+                                    let displayTime = item.display ? item.display : item.time;
+                                    text += `${idx + 1}. ${item.name} ${displayTime}${labelText}${badges}\n`; 
+                                }
+                            }); 
+                        }); 
+                    } 
+                    text += `\nSimulador de Turnos`; shareText(text); 
+                } else if (viewMode === 'weekly') {
+                    if (!weekData) return; 
+                    const weekStart = weekData[0].date.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }); 
+                    const weekEnd = weekData[5].date.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }); 
+                    let text = `📅 *SEMANA ${weekStart} - ${weekEnd}* (${COLLA_NAMES[activeColla]})\n\n`; 
+                    [...names, ...verdes.map(v => v.name)].forEach(name => { 
+                        text += `👤 *${name}*\n`; 
+                        let line1 = ""; let line2 = ""; 
+                        for(let i=0; i<3; i++) { 
+                            const d = weekData[i]; const info = d.data[name]; const dayName = d.shortName.substring(0,2); let val = "⚪"; 
+                            if(info?.status === 'BAJA') val = "🚑"; else if(info?.status === 'VACACIONES') val = "🏖️"; else if(info?.status === 'WORK') { let displayTime = info.display || info.time.split(':')[0].replace(/^0/, ''); let centerCode = info.center === 'CEHORPA' ? 'CEH' : 'COR'; let emoji = "🔵"; if (info.role && info.role.includes('GUARDIA')) emoji = "🟢"; else if (info.role && info.role.includes('MADRUGA')) emoji = "🟠"; else if (info.role && info.role.includes('INTERMEDIO')) emoji = "🟡"; let extra = ""; if(info.isFlejador) extra = "F"; if(info.special) extra = "P"; if(extra) extra = `(${extra})`; val = `${emoji} ${centerCode} ${displayTime}${extra}`; } else { val = "⚪ LIBRE"; } line1 += `${dayName}: ${val}  `; 
+                        } 
+                        for(let i=3; i<6; i++) { 
+                            const d = weekData[i]; const info = d.data[name]; const dayName = d.shortName.substring(0,2); let val = "⚪"; 
+                            if(info?.status === 'BAJA') val = "🚑"; else if(info?.status === 'VACACIONES') val = "🏖️"; else if(info?.status === 'WORK') { let displayTime = info.display || info.time.split(':')[0].replace(/^0/, ''); let centerCode = info.center === 'CEHORPA' ? 'CEH' : 'COR'; let emoji = "🔵"; if (info.role && info.role.includes('GUARDIA')) emoji = "🟢"; else if (info.role && info.role.includes('MADRUGA')) emoji = "🟠"; else if (info.role && info.role.includes('INTERMEDIO')) emoji = "🟡"; let extra = ""; if(info.isFlejador) extra = "F"; if(info.special) extra = "P"; if(extra) extra = `(${extra})`; val = `${emoji} ${centerCode} ${displayTime}${extra}`; } else { val = "⚪ LIBRE"; } line2 += `${dayName}: ${val}  `; 
+                        } 
+                        text += `${line1}\n${line2}\n\n`; 
+                    }); 
+                    text += `Simulador de Turnos`; shareText(text); 
+                } else {
+                    if (!monthData) return;
+                    const monthLabel = selectedDate.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' }).toUpperCase();
+                    let text = `📅 *${monthLabel}* (${COLLA_NAMES[activeColla]})\n\n`;
+                    monthData.filter(Boolean).forEach(day => {
+                        const label = day.date.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric' }).replace('.', '');
+                        if (day.isSunday) text += `${label}: DOMINGO\n`;
+                        else text += `${label}: ${day.center.substring(0, 3)} | Libra ${day.libra} | G${day.guardias} M${day.madrugan} A${day.ausencias}\n`;
+                    });
+                    text += `\nSimulador de Turnos`; shareText(text);
+                } 
+            };
+
+            const performSearch = () => {
+                if (['person', 'guardias', 'madrugadas', 'libres'].includes(searchType)) {
+                    if (!searchPerson) return showMessage('Falta la persona', 'Selecciona a una persona antes de buscar.');
+                    const results = [];
+                    const iterDate = new Date(selectedDate);
+                    const isEventSearch = searchType !== 'person';
+                    const maxDays = isEventSearch ? 366 : searchRange;
+                    for (let i = 0; i < maxDays; i++) {
+                        const date = new Date(iterDate);
+                        const sim = calculateSimulation(date, activeColla, collasData, globalConfig);
+                        const personStatus = sim && !sim.isSunday ? sim.personStatus[searchPerson] : null;
+                        if (!isEventSearch) {
+                            let status = 'DESCONOCIDO';
+                            if (!sim) status = 'NO DISPONIBLE';
+                            else if (sim.isSunday) status = 'DOMINGO';
+                            else if (!personStatus) status = 'NO ENCONTRADO';
+                            else if (personStatus.status === 'LIBRE') status = 'LIBRA';
+                            else if (['BAJA', 'VACACIONES'].includes(personStatus.status)) status = personStatus.status;
+                            else if (personStatus.status === 'WORK') status = 'TRABAJA';
+                            results.push({ date, status, details: personStatus });
+                        } else if (personStatus) {
+                            const isMatchingEvent = searchType === 'libres'
+                                ? personStatus.status === 'LIBRE'
+                                : personStatus.status === 'WORK' && personStatus.role === (searchType === 'guardias' ? 'GUARDIA' : 'MADRUGA');
+                            if (isMatchingEvent) {
+                                results.push({
+                                    date,
+                                    type: searchType === 'libres' ? 'LIBRE' : searchType === 'guardias' ? 'GUARDIA' : 'MADRUGA',
+                                    center: personStatus.center || '',
+                                    details: personStatus
+                                });
+                            }
+                        }
+                        iterDate.setDate(iterDate.getDate() + 1);
+                        if (isEventSearch && results.length >= 10) break;
+                    }
+                    setSearchResults(results);
+                } else {
+                    const start = parseLocalDate(searchType === 'date' ? searchDateQuery : searchStartDate);
+                    if (!start) return showMessage('Fecha no válida', 'Selecciona una fecha inicial válida.');
+                    if (searchType === 'date') {
+                        const sim1 = calculateSimulation(start, '1', collasData, globalConfig);
+                        const sim2 = calculateSimulation(start, '2', collasData, globalConfig);
+                        let result = { date: start, status: 'OK', libras: [] };
+                        if ((sim1 && sim1.isSunday) || (sim2 && sim2.isSunday)) result.status = 'DOMINGO';
+                        else if (sim1 && sim2) {
+                            result.libras = [
+                                { colla: 'RAYO', name: sim1.libra, status: sim1.libraStatus },
+                                { colla: 'MIGUEL SEXI', name: sim2.libra, status: sim2.libraStatus }
+                            ];
+                        } else result.status = 'NO DISPONIBLE';
+                        setSearchResults([result]);
+                        return;
+                    }
+
+                    const end = parseLocalDate(searchEndDate);
+                    if (!end || end < start) return showMessage('Rango no válido', 'La fecha final debe ser válida y no anterior a la fecha inicial.');
+                    const totalDays = Math.round((Date.UTC(end.getFullYear(), end.getMonth(), end.getDate()) - Date.UTC(start.getFullYear(), start.getMonth(), start.getDate())) / 86400000) + 1;
+                    if (totalDays > 366) return showMessage('Rango demasiado largo', 'El buscador admite rangos de hasta 366 días.');
+                    const results = [];
+                    const date = new Date(start);
+                    for (let i = 0; i < totalDays; i++) {
+                        const sims = ['1', '2'].map(collaId => calculateSimulation(new Date(date), collaId, collasData, globalConfig));
+                        const isSunday = sims.some(sim => sim && sim.isSunday);
+                        results.push({
+                            date: new Date(date),
+                            status: isSunday ? 'DOMINGO' : sims.every(Boolean) ? 'OK' : 'NO DISPONIBLE',
+                            libres: isSunday ? [] : sims.flatMap((sim, index) => sim
+                                ? [{ colla: COLLA_NAMES[index === 0 ? '1' : '2'], name: sim.libra }]
+                                : [])
+                        });
+                        date.setDate(date.getDate() + 1);
+                    }
+                    setSearchResults(results);
+                }
+            };
+
+            const handleExportSearchResults = () => {
+                if (!searchResults || !searchResults.length) return showMessage('Sin resultados', 'Realiza una búsqueda antes de exportar.');
+                const rows = [['Fecha', 'Colla', 'Persona', 'Resultado', 'Centro', 'Hora']];
+                const addRow = (date, colla, person, result, center = '', time = '') => {
+                    rows.push([
+                        formatLocalDate(date),
+                        colla,
+                        person || '',
+                        result || '',
+                        center || '',
+                        time || ''
+                    ]);
+                };
+                if (searchType === 'person') {
+                    searchResults.forEach(item => addRow(item.date, COLLA_NAMES[activeColla], searchPerson, item.status, item.details?.center, item.details?.time));
+                } else if (['guardias', 'madrugadas', 'libres'].includes(searchType)) {
+                    searchResults.forEach(item => addRow(item.date, COLLA_NAMES[activeColla], searchPerson, item.type, item.center, item.details?.time));
+                } else if (searchType === 'date') {
+                    searchResults.forEach(item => item.libras.forEach(libra => addRow(item.date, libra.colla, libra.name, 'LIBRA')));
+                } else {
+                    searchResults.forEach(item => {
+                        if (item.status !== 'OK') addRow(item.date, '', '', item.status);
+                        item.libres.forEach(libra => addRow(item.date, libra.colla, libra.name, 'LIBRA'));
+                    });
+                }
+                const csv = `\uFEFF${rows.map(row => row.map(value => `"${String(value).replaceAll('"', '""')}"`).join(';')).join('\r\n')}`;
+                const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `busqueda-turnos-${formatLocalDate(new Date())}.csv`;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+            };
+
+            // RENDER
+            return (
+                <div className="min-h-screen bg-gray-50 text-gray-800 font-sans text-xs flex flex-col">
+                    <Header activeColla={activeColla} setActiveColla={setActiveColla} cloudStatus={cloudStatus} cloudError={cloudError} onCloudRetry={connectToSupabase} onSave={saveCurrentDataToCloud} isSaving={isSaving} onSettingsClick={() => { setConfigTab('Personal'); setShowSettings(true); }} />
+                    
+                    <ControlBar 
+                        selectedDate={selectedDate} setSelectedDate={setSelectedDate} 
+                        viewMode={viewMode} setViewMode={setViewMode} 
+                        onSearch={() => { setShowSearch(true); setSearchResults(null); }} 
+                        onStats={calculateMonthlyStats} onShare={handleShare}
+                        weekData={weekData}
+                        handlePrev={handlePrev} handleNext={handleNext} handleToday={handleToday} isToday={isToday(selectedDate)}
+                    />
+
+                    {/* MODAL GLOBAL */}
+                    <ConfirmationModal 
+                        show={modalConfig.show} 
+                        title={modalConfig.title} 
+                        message={modalConfig.message} 
+                        onConfirm={modalConfig.onConfirm} 
+                        onCancel={() => setModalConfig(prev => ({ ...prev, show: false }))}
+                        isAlert={modalConfig.isAlert}
+                    />
+
+                    {importPreview && (
+                        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 p-4">
+                            <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-5 shadow-2xl">
+                                <h2 className="text-lg font-black text-slate-800">Revisar copia antes de importar</h2>
+                                <p className="mt-1 break-all text-xs text-slate-500">{importPreview.name}</p>
+                                <div className="mt-4 space-y-2">
+                                    {importPreview.counts.map(item => (
+                                        <div key={item.name} className="rounded-lg border bg-slate-50 p-3">
+                                            <p className="text-sm font-black text-slate-700">{item.name}</p>
+                                            <p className="mt-1 text-xs text-slate-600">{item.people} personas · {item.verdes} verdes · {item.absences} ausencias</p>
+                                        </div>
+                                    ))}
+                                </div>
+                                <p className="mt-3 rounded-lg bg-amber-50 p-3 text-xs font-semibold text-amber-900">
+                                    Se creará y descargará una copia de seguridad del estado actual antes de reemplazarlo.
+                                    {importPreview.adjustedIntermedios && ' Al importar se ajustará la configuración de intermedios de Cortijos para cuadrar la capacidad.'}
+                                </p>
+                                <div className="mt-5 flex gap-2">
+                                    <button onClick={() => setImportPreview(null)} className="flex-1 rounded-lg bg-slate-100 py-3 text-xs font-bold text-slate-700">CANCELAR</button>
+                                    <button onClick={confirmImportBackup} className="flex-1 rounded-lg bg-emerald-600 py-3 text-xs font-bold text-white">CREAR COPIA E IMPORTAR</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Modals & Overlays */}
+                    {showStats && monthlyStats && (
+                        <div className="fixed inset-0 z-50 bg-black/50 flex flex-col justify-center items-center p-4 animate-in fade-in duration-200">
+                             <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md relative max-h-[80vh] flex flex-col">
+                                <button onClick={() => setShowStats(false)} className="absolute top-3 right-3 text-gray-400 hover:text-gray-600"><Icon path={Icons.X} className="w-5 h-5" /></button>
+                                <h2 className="text-xl font-bold text-gray-800 mb-1 flex items-center gap-2"><Icon path={Icons.Chart} className="w-6 h-6 text-indigo-500" /> Estadísticas Mensuales</h2>
+                                <p className="text-xs text-gray-400 mb-4 uppercase font-bold tracking-widest">{selectedDate.toLocaleString('es-ES', { month: 'long', year: 'numeric' })} - {COLLA_NAMES[activeColla]}</p>
+                                <div className="overflow-y-auto flex-1 pr-2">
+                                    <table className="w-full text-left text-xs">
+                                        <thead className="bg-gray-50 sticky top-0"><tr><th className="p-2 border-b">Nombre</th><th className="p-2 border-b text-center">Días</th><th className="p-2 border-b text-center text-emerald-600">G</th><th className="p-2 border-b text-center text-orange-600">M</th><th className="p-2 border-b text-center text-red-600">B</th></tr></thead>
+                                        <tbody className="divide-y divide-gray-100">{Object.entries(monthlyStats).sort((a,b) => b[1].days - a[1].days).map(([name, stat]) => (
+                                            <tr key={name}><td className="p-2 font-bold text-slate-700 truncate max-w-[100px]">{name}</td><td className="p-2 text-center font-bold">{stat.days}</td><td className="p-2 text-center text-emerald-600 bg-emerald-50 rounded">{stat.guardia}</td><td className="p-2 text-center text-orange-600 bg-orange-50 rounded">{stat.madruga}</td><td className="p-2 text-center text-red-600">{stat.baja > 0 ? stat.baja : '-'}</td></tr>
+                                        ))}</tbody>
+                                    </table>
+                                </div>
+                             </div>
+                        </div>
+                    )}
+
+                    {showSearch && ( <div className="fixed inset-0 z-50 bg-white flex flex-col p-4 animate-in fade-in duration-200"> 
+                        <div className="flex justify-between mb-4"><h2 className="text-xl font-bold">Buscador</h2><button onClick={() => setShowSearch(false)}><Icon path={Icons.X} className="w-6 h-6" /></button></div> 
+                        <div className="bg-white p-2 rounded-lg shadow-sm border border-gray-200 mb-3">
+                            <div className="scrollbar-hide mb-3 flex gap-1 overflow-x-auto border-b pb-2">
+                                {[
+                                    ['person', 'Por persona'],
+                                    ['guardias', 'Guardias'],
+                                    ['madrugadas', 'Madrugadas'],
+                                    ['libres', 'Días libres'],
+                                    ['date', 'Quién libra'],
+                                    ['range', 'Entre fechas']
+                                ].map(([type, label]) => (
+                                    <button key={type} onClick={() => { setSearchType(type); setSearchResults(null); }} className={`shrink-0 rounded-lg px-3 py-2 text-[10px] font-bold ${searchType === type ? 'bg-emerald-600 text-white' : 'bg-gray-100 text-gray-500'}`}>{label}</button>
+                                ))}
+                            </div>
+                            {['person', 'guardias', 'madrugadas', 'libres'].includes(searchType) ? (
+                                <div className="flex gap-2 mb-2">
+                                    <select className="flex-1 p-2 border rounded text-sm font-bold bg-gray-50" value={searchPerson} onChange={(e) => setSearchPerson(e.target.value)}><option value="">Selecciona Persona...</option>{names.map(n => <option key={n} value={n}>{n}</option>)}{verdes.map(v => <option key={v.name} value={v.name}>{v.name} (Verde)</option>)}</select>
+                                    {searchType === 'person' && <div className="flex rounded border overflow-hidden shrink-0"><button onClick={() => setSearchRange(7)} className={`px-3 py-2 text-xs font-bold ${searchRange === 7 ? 'bg-emerald-100 text-emerald-800' : 'bg-white'}`}>7D</button><button onClick={() => setSearchRange(30)} className={`px-3 py-2 text-xs font-bold ${searchRange === 30 ? 'bg-emerald-100 text-emerald-800' : 'bg-white'}`}>30D</button></div>}
+                                </div>
+                            ) : searchType === 'date' ? (
+                                <div className="mb-2"><label className="mb-1 block text-[10px] font-bold text-slate-500">Fecha</label><input type="date" className="w-full p-3 border rounded text-lg font-bold text-center" value={searchDateQuery} onChange={e => setSearchDateQuery(e.target.value)} /></div>
+                            ) : (
+                                <div className="mb-2 grid grid-cols-2 gap-2">
+                                    <label className="text-[10px] font-bold text-slate-500">Desde<input type="date" className="mt-1 w-full rounded border p-2 text-sm" value={searchStartDate} onChange={e => setSearchStartDate(e.target.value)} /></label>
+                                    <label className="text-[10px] font-bold text-slate-500">Hasta<input type="date" className="mt-1 w-full rounded border p-2 text-sm" value={searchEndDate} onChange={e => setSearchEndDate(e.target.value)} /></label>
+                                </div>
+                            )}
+                            <button onClick={performSearch} disabled={['person', 'guardias', 'madrugadas', 'libres'].includes(searchType) && !searchPerson} className="w-full bg-emerald-600 text-white py-2 rounded font-bold text-sm">VER RESULTADO</button>
+                        </div>
+                        {searchResults && (<div className="pb-10 animate-in slide-in-from-bottom-2 fade-in duration-300 flex-1 overflow-y-auto">
+                            <button onClick={handleExportSearchResults} className="mb-3 w-full rounded-lg border border-slate-300 bg-white py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50">EXPORTAR RESULTADO A CSV</button>
+                            {searchType === 'person' ? (
+                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                                    {searchResults.map((res, idx) => (
+                                        <div key={idx} className={`rounded-lg border-2 shadow-sm p-1.5 flex flex-col justify-between min-h-[95px] relative overflow-hidden ${res.status === 'DOMINGO' ? 'bg-slate-300 border-slate-500' : res.status === 'LIBRA' ? 'bg-gray-300 border-gray-500' : res.status === 'BAJA' ? 'bg-red-300 border-red-500' : res.status === 'VACACIONES' ? 'bg-green-300 border-green-500' : (res.details?.role||'').includes('GUARDIA') ? 'bg-emerald-300 border-emerald-500' : (res.details?.role||'').includes('MADRUGA') ? 'bg-orange-300 border-orange-500' : 'bg-blue-300 border-blue-500'}`}>
+                                            <div className="flex justify-between items-start mb-1">
+                                                <div className="text-center leading-tight bg-white/50 rounded px-1 min-w-[30px]"><div className="text-[9px] font-bold text-black uppercase">{res.date.toLocaleDateString('es-ES', { weekday: 'short' })}</div><div className="text-sm font-black text-black">{res.date.getDate()}</div></div>
+                                                {res.status === 'TRABAJA' && <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-black/80 text-white uppercase tracking-tighter shadow-sm">{res.details.center.substring(0,3)}</span>}
+                                            </div>
+                                            <div className="flex-1 flex flex-col justify-center items-center">
+                                                {res.status === 'DOMINGO' && <div className="text-slate-500 flex flex-col items-center"><Icon path={Icons.Coffee} className="w-6 h-6 mb-0.5 text-slate-600" /><span className="text-[10px] font-black">DOMINGO</span></div>}
+                                                {res.status === 'LIBRA' && <div className="text-red-700 flex flex-col items-center"><Icon path={Icons.Moon} className="w-6 h-6 mb-0.5 text-red-600" /><span className="text-[11px] font-black">LIBRA</span></div>}
+                                                {res.status === 'TRABAJA' && <div className="text-center w-full bg-white/40 rounded py-1"><div className="text-2xl font-black text-black leading-none mb-0.5 tracking-tight">{res.details.time}</div><div className="text-[10px] font-bold text-black uppercase flex items-center justify-center gap-1">{res.details.role}</div></div>}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : ['guardias', 'madrugadas', 'libres'].includes(searchType) ? (
+                                <div className="space-y-2">
+                                    <h3 className="text-center font-bold text-slate-500 text-xs mb-2 uppercase tracking-widest">Próximos {searchType === 'guardias' ? 'servicios de guardia' : searchType === 'madrugadas' ? 'servicios de madrugada' : 'días libres'} de {searchPerson}</h3>
+                                    {searchResults.map((res, idx) => (
+                                        <div key={idx} className={`flex items-center p-3 rounded-lg shadow-sm border-l-4 ${res.type === 'LIBRE' ? 'bg-red-50 border-red-500' : res.type === 'MADRUGA' ? 'bg-orange-50 border-orange-500' : 'bg-emerald-50 border-emerald-500'}`}>
+                                            <div className="bg-white/80 rounded px-2 py-1 text-center mr-3 min-w-[50px] shadow-sm">
+                                                <div className="text-[10px] font-bold text-slate-500 uppercase">{res.date.toLocaleDateString('es-ES', { weekday: 'short' })}</div>
+                                                <div className="text-xl font-black text-slate-800 leading-none">{res.date.getDate()}</div>
+                                                <div className="text-[9px] font-bold text-slate-400">{res.date.toLocaleDateString('es-ES', { month: 'short' })}</div>
+                                            </div>
+                                            <div className="flex-1">
+                                                <div className={`text-sm font-black ${res.type === 'LIBRE' ? 'text-red-600' : res.type === 'MADRUGA' ? 'text-orange-700' : 'text-emerald-700'}`}>
+                                                    {res.type === 'LIBRE' ? 'LIBRA' : res.type === 'MADRUGA' ? 'MADRUGA' : 'GUARDIA'}
+                                                </div>
+                                                {res.type !== 'LIBRE' && (
+                                                    <div className="text-xs font-bold text-slate-600 bg-white/50 inline-block px-1.5 rounded mt-0.5 border border-emerald-100">
+                                                        {res.center ? `en ${res.center}` : ''}{res.details?.time ? ` · ${res.details.time}` : ''}
+                                                    </div>
+                                                )}
+                                            </div>
+                                            {res.type === 'GUARDIA' && <div className="text-emerald-200"><Icon path={Icons.Map} className="w-8 h-8" /></div>}
+                                            {res.type === 'MADRUGA' && <div className="text-orange-200"><Icon path={Icons.Cal} className="w-8 h-8" /></div>}
+                                            {res.type === 'LIBRE' && <div className="text-red-200"><Icon path={Icons.Moon} className="w-8 h-8" /></div>}
+                                        </div>
+                                    ))}
+                                    {searchResults.length === 0 && <div className="text-center text-gray-400 py-4 italic">No se encontraron resultados próximos.</div>}
+                                </div>
+                            ) : searchType === 'date' ? (
+                                <div className="bg-white p-6 rounded-xl shadow-md text-center border-2 border-emerald-100">
+                                    <h4 className="text-sm font-bold text-gray-500 uppercase mb-4">{searchResults[0].date.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</h4>
+                                    {searchResults[0].status === 'DOMINGO' ? <div className="text-gray-400 flex flex-col items-center py-4"><Icon path={Icons.Coffee} className="w-16 h-16 mb-3 text-gray-300" /><span className="text-2xl font-black text-gray-400">ES DOMINGO</span></div> : searchResults[0].status === 'NO DISPONIBLE' ? <p className="py-4 text-sm font-bold text-slate-500">No hay datos disponibles para una o ambas collas.</p> : (
+                                        <div className="flex justify-around items-center py-4">{searchResults[0].libras.map((l, idx) => (<div key={idx} className="flex flex-col items-center"><span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">{l.colla}</span><div className="bg-red-50 border border-red-100 rounded-lg p-3 flex flex-col items-center min-w-[120px]"><Icon path={Icons.Moon} className="w-8 h-8 text-red-400 mb-1" /><span className="text-lg font-black text-slate-800">{l.name}</span><span className="text-[10px] font-bold text-red-500">LIBRA</span></div></div>))}</div>
+                                    )}
+                                </div>
+                            ) : (
+                                <div className="space-y-2">
+                                    <h3 className="text-center font-bold text-slate-500 text-xs mb-2 uppercase tracking-widest">Personas que libran entre las fechas seleccionadas</h3>
+                                    {searchResults.map((item, idx) => (
+                                        <div key={idx} className="rounded-lg border bg-white p-3 shadow-sm">
+                                            <div className="mb-2 font-black text-slate-700">{item.date.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</div>
+                                            {item.status === 'DOMINGO' ? <span className="rounded bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-500">DOMINGO</span> : item.status === 'NO DISPONIBLE' ? <span className="text-[10px] font-bold text-amber-700">No hay datos completos para ambas collas.</span> : (
+                                                <div className="flex flex-wrap gap-2">{item.libres.map(libra => <span key={libra.colla} className="rounded bg-red-50 px-2 py-1 text-[10px] font-bold text-red-700">{libra.colla}: {libra.name} libra</span>)}</div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>)}
+                    </div>)}
+
+                    {showSettings && tempConfig && ( <div className="fixed inset-0 z-[100] flex flex-col overflow-hidden bg-white p-3 sm:p-6">
+                        <div className="-mx-3 flex shrink-0 items-center justify-between border-b bg-white px-3 py-2 sm:-mx-6 sm:px-6"><h2 className="text-lg font-bold sm:text-xl">Configuración ({COLLA_NAMES[activeColla]})</h2><button onClick={() => setShowSettings(false)} className="rounded bg-slate-200 p-2"><Icon path={Icons.X} className="w-5 h-5" /></button></div>
+                        <nav className="-mx-3 mb-2 grid shrink-0 grid-cols-5 gap-1 border-b bg-white px-3 py-2 sm:-mx-6 sm:px-6" aria-label="Secciones de configuración">
+                            {['Personal', 'Ausencias', 'Verdes', 'Turnos', 'Copias'].map(tab => (
+                                <button key={tab} onClick={() => setConfigTab(tab)} aria-current={configTab === tab ? 'page' : undefined} className={`min-w-0 rounded-lg px-1 py-2 text-[11px] font-black sm:px-3 sm:text-sm ${configTab === tab ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600'}`}>{tab}</button>
+                            ))}
+                        </nav>
+                        <div className="min-h-0 flex-1 overflow-y-auto">
+                        <div className="mx-auto max-w-4xl space-y-8 pb-4">
+                            <div className={`${configTab !== 'Copias' ? 'hidden ' : ''}rounded-xl shadow-sm border p-4 ${criticalAlerts.length ? 'bg-red-50 border-red-200' : warningAlerts.length ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'}`}>
+                                <div className="flex items-center justify-between gap-3 mb-3">
+                                    <h3 className={`text-sm font-black uppercase ${criticalAlerts.length ? 'text-red-800' : warningAlerts.length ? 'text-amber-800' : 'text-emerald-800'}`}>
+                                        Alertas de coherencia
+                                    </h3>
+                                    <span className={`rounded-full px-2 py-1 text-[10px] font-black ${criticalAlerts.length ? 'bg-red-600 text-white' : warningAlerts.length ? 'bg-amber-500 text-white' : 'bg-emerald-600 text-white'}`}>
+                                        {alertSummary}
+                                    </span>
+                                </div>
+                                {dataAlerts.length === 0 ? (
+                                    <p className="text-xs font-semibold text-emerald-800">No se han detectado incoherencias en personal, verdes, ausencias ni configuración.</p>
+                                ) : (
+                                    <div className="space-y-2">
+                                        {dataAlerts.slice(0, 8).map((alert, idx) => (
+                                            <div key={idx} className="flex gap-2 rounded-lg bg-white/80 border border-white px-3 py-2 text-xs">
+                                                <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-black text-white ${alert.severity === 'error' ? 'bg-red-600' : 'bg-amber-500'}`}>
+                                                    {alert.severity === 'error' ? 'ERROR' : 'AVISO'}
+                                                </span>
+                                                <div>
+                                                    <span className="font-black text-slate-700">{alert.scope}: </span>
+                                                    <span className="font-semibold text-slate-600">{alert.message}</span>
+                                                </div>
+                                            </div>
+                                        ))}
+                                        {dataAlerts.length > 8 && <p className="text-[10px] font-bold text-slate-500">Hay {dataAlerts.length - 8} alertas más. Corrige las primeras y vuelve a revisar.</p>}
+                                    </div>
+                                )}
+                            </div>
+                            <div className={`${configTab !== 'Copias' ? 'hidden ' : ''}rounded-xl border border-indigo-200 bg-indigo-50 p-4`}>
+                                <div className="mb-3 flex items-center justify-between gap-3">
+                                    <div>
+                                        <h3 className="text-sm font-black uppercase text-indigo-900">Historial de cambios</h3>
+                                        <p className="mt-1 text-[10px] font-semibold text-indigo-700">Autor no identificable porque la app funciona sin iniciar sesión.</p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={requestUndoLastChange}
+                                        disabled={!undoStack.length || cloudStatus !== 'connected'}
+                                        className="shrink-0 rounded-lg bg-indigo-700 px-3 py-2 text-[10px] font-black text-white shadow-sm hover:bg-indigo-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                                        title={cloudStatus !== 'connected' ? 'Conecta con Supabase para deshacer de forma segura' : ''}
+                                    >
+                                        DESHACER ÚLTIMO
+                                    </button>
+                                </div>
+                                {changeHistory.length ? (
+                                    <div className="max-h-64 space-y-2 overflow-y-auto">
+                                        {[...changeHistory].reverse().slice(0, 12).map(entry => (
+                                            <div key={entry.id} className="rounded-lg border border-indigo-100 bg-white px-3 py-2">
+                                                <p className="text-xs font-bold text-slate-700">{entry.summary}</p>
+                                                <p className="mt-1 text-[10px] text-slate-500">
+                                                    {entry.at && !Number.isNaN(new Date(entry.at).getTime())
+                                                        ? new Date(entry.at).toLocaleString('es-ES')
+                                                        : 'Fecha no disponible'}
+                                                    {' · '}
+                                                    {entry.actor || 'Autor no identificado'}
+                                                </p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <p className="text-xs font-semibold text-indigo-800">Aún no hay cambios registrados. Los próximos cambios guardados aparecerán aquí.</p>
+                                )}
+                            </div>
+                            <div className={`${configTab !== 'Copias' ? 'hidden ' : ''}bg-slate-50 rounded-xl shadow-sm border border-slate-200 p-4`}>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <button onClick={handleExportBackup} className="bg-white border border-slate-300 text-slate-700 py-3 rounded-lg font-bold shadow-sm hover:bg-slate-100 flex items-center justify-center gap-2">
+                                        <Icon path={Icons.Share} className="w-4 h-4" /> EXPORTAR COPIA
+                                    </button>
+                                    <button onClick={() => importBackupInputRef.current?.click()} className="bg-slate-800 text-white py-3 rounded-lg font-bold shadow-sm hover:bg-slate-700 flex items-center justify-center gap-2">
+                                        <Icon path={Icons.Plus} className="w-4 h-4" /> IMPORTAR COPIA
+                                    </button>
+                                </div>
+                                {preImportBackup && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+                                    <h4 className="text-xs font-black text-emerald-900">COPIA ANTERIOR A LA ÚLTIMA IMPORTACIÓN</h4>
+                                    <p className="mt-1 text-[10px] font-semibold text-emerald-800">
+                                        Guardada {preImportBackup.exportedAt && !Number.isNaN(new Date(preImportBackup.exportedAt).getTime())
+                                            ? new Date(preImportBackup.exportedAt).toLocaleString('es-ES')
+                                            : 'con fecha desconocida'} en este navegador.
+                                    </p>
+                                    <button onClick={requestRestorePreImportBackup} className="mt-2 w-full rounded-lg bg-emerald-700 py-2 text-xs font-bold text-white hover:bg-emerald-800">
+                                        RESTAURAR COPIA ANTERIOR
+                                    </button>
+                                </div>}
+                                <p className="mt-3 text-[10px] text-slate-500">Las copias automáticas se guardan en este navegador. Conserva también los archivos exportados fuera del dispositivo.</p>
+                                {conflictBackupAvailable && <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                                    <p className="text-xs font-bold text-amber-900">Hay un borrador local que no se sincronizó por cambios simultáneos.</p>
+                                    <button onClick={exportConflictBackup} className="mt-2 w-full rounded-lg bg-amber-700 py-2 text-xs font-bold text-white">EXPORTAR BORRADOR PARA RECUPERARLO</button>
+                                </div>}
+                                <input ref={importBackupInputRef} type="file" accept="application/json,.json" className="hidden" onChange={handleImportBackup} />
+                            </div>
+                            <div className={`${configTab !== 'Personal' ? 'hidden ' : ''}bg-blue-50 rounded-xl shadow-sm border border-blue-200 p-6`}>
+                                <h3 className="text-xl font-bold text-blue-800 mb-6 border-b border-blue-200 pb-2 flex items-center gap-2"><Icon path={Icons.Swap} className="w-6 h-6" /> TRASPASO ENTRE COLLAS</h3>
+                                <div className="space-y-4">
+                                    <div><label className="block text-xs font-bold text-gray-500 mb-1">Origen</label><select className="w-full border rounded p-2 text-sm font-bold" value={transferSource} onChange={e => setTransferSource(e.target.value)}><option value="1">RAYO</option><option value="2">MIGUEL SEXI</option></select></div>
+                                    <div><label className="block text-xs font-bold text-gray-500 mb-1">Persona a mover</label><select className="w-full border rounded p-2 text-sm" value={transferName} onChange={e => setTransferName(e.target.value)}><option value="">Selecciona...</option>{(collasData[transferSource].names || []).map(n => <option key={n} value={n}>{n}</option>)}</select></div>
+                                    <div><label className="block text-xs font-bold text-gray-500 mb-1">Destino</label><div className="w-full p-2 border rounded bg-gray-100 text-sm font-bold text-gray-600">Mover a: {COLLA_NAMES[transferSource === '1' ? '2' : '1']}</div></div>
+                                    <div><label className="block text-xs font-bold text-gray-500 mb-1">Posición destino (Número)</label><input type="number" min="1" className="w-full border rounded p-2 text-sm" value={transferPos} onChange={e => setTransferPos(e.target.value)} /></div>
+                                    <button onClick={handleTransfer} className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold shadow hover:bg-blue-700 flex justify-center items-center gap-2"><Icon path={Icons.Swap} className="w-4 h-4" /> REALIZAR TRASPASO</button>
+                                </div>
+                            </div>
+                            <div className={`${configTab !== 'Ausencias' ? 'hidden ' : ''}bg-red-50 rounded-xl shadow-sm border border-red-200 p-6`}>
+                                <h3 className="text-xl font-bold text-red-800 mb-6 border-b border-red-200 pb-2 flex items-center gap-2"><Icon path={Icons.Bandage} className="w-6 h-6" /> GESTIONAR AUSENCIAS</h3>
+                                <div className="space-y-4">
+                                    <div><label className="block text-xs font-bold text-gray-500 mb-1">Persona</label><select className="w-full border rounded p-2 text-sm" value={absenceForm.name} onChange={e => setAbsenceForm({...absenceForm, name: e.target.value})}><option value="">Selecciona...</option>{names.map(n => <option key={n} value={n}>{n}</option>)}{verdes.map(n => <option key={n.name} value={n.name}>{n.name} (Verde)</option>)}</select></div>
+                                    <div><label className="block text-xs font-bold text-gray-500 mb-1">Tipo</label><div className="flex gap-2"><button onClick={() => setAbsenceForm({...absenceForm, type: 'BAJA'})} className={`flex-1 py-2 rounded text-sm font-bold border ${absenceForm.type === 'BAJA' ? 'bg-red-500 text-white border-red-600' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>BAJA</button><button onClick={() => setAbsenceForm({...absenceForm, type: 'VACACIONES'})} className={`flex-1 py-2 rounded text-sm font-bold border ${absenceForm.type === 'VACACIONES' ? 'bg-green-500 text-white border-green-600' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>VACACIONES</button></div></div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div><label className="block text-xs font-bold text-gray-500 mb-1">Desde</label><input type="date" className="w-full border rounded p-2 text-sm" value={absenceForm.start} onChange={e => setAbsenceForm({...absenceForm, start: e.target.value})} /></div>
+                                        <div><label className="block text-xs font-bold text-gray-500 mb-1">Hasta (Opcional)</label><input type="date" className="w-full border rounded p-2 text-sm" value={absenceForm.end} onChange={e => setAbsenceForm({...absenceForm, end: e.target.value})} /></div>
+                                    </div>
+                                    <div className="flex items-center h-10 w-full bg-slate-50 border rounded px-2"><input type="checkbox" id="shiftsRotation" className="w-4 h-4 mr-2" checked={absenceForm.shiftsRotation} onChange={e => setAbsenceForm({...absenceForm, shiftsRotation: e.target.checked})} /><label htmlFor="shiftsRotation" className="text-xs font-bold text-gray-600 cursor-pointer select-none">¿Corre Turno?</label></div>
+                                    <button onClick={handleSaveAbsence} className="w-full bg-slate-800 text-white py-3 rounded-lg font-bold shadow hover:bg-slate-700">AÑADIR AUSENCIA</button>
+                                </div>
+                                <div className="mt-4 pt-4 border-t border-red-100"><h4 className="text-xs font-bold text-red-400 uppercase tracking-widest mb-3">Ausencias Registradas</h4>{activeAbsencesList.length > 0 ? (<div className="space-y-2">{activeAbsencesList.map((item, idx) => { const isActive = !item.end; return (<div key={idx} className="flex justify-between items-center bg-white p-2 rounded border border-red-100 text-xs"><div className="flex flex-col"><div className="flex items-center gap-2"><span className="font-bold text-gray-800">{item.name}</span><span className={`px-1.5 rounded text-[9px] font-bold ${item.status === 'BAJA' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>{item.status}</span></div><span className="font-mono text-gray-500 text-[10px]">Desde {item.start} {item.end ? `hasta ${item.end}` : '(En curso)'}</span><span className="text-[9px] text-gray-400 italic">{item.shiftsRotation ? 'Corre turno' : 'No corre turno'}</span></div><div className="flex gap-2">{isActive && <button onClick={() => handleEndAbsence(item.id)} className="text-white bg-green-500 hover:bg-green-600 px-2 py-1 rounded text-[9px] font-bold">DAR ALTA</button>}<button onClick={() => handleDeleteAbsence(item.id)} className="text-red-400 hover:text-red-600 p-1"><Icon path={Icons.Trash} className="w-4 h-4" /></button></div></div>)})}</div>) : (<p className="text-xs text-gray-400 italic text-center">No hay ausencias registradas.</p>)}</div>
+                            </div>
+                            <div className={`${configTab !== 'Personal' ? 'hidden ' : ''}bg-white rounded-xl shadow-sm border border-slate-200 p-6`}><h3 className="text-xl font-bold text-slate-800 mb-6 border-b pb-2 flex items-center gap-2"><Icon path={Icons.Users} className="w-6 h-6" /> GESTIÓN DE PERSONAL ({COLLA_NAMES[activeColla]})</h3><form onSubmit={handleAddName} className="flex flex-wrap gap-3 mb-6"><input type="text" placeholder="Nuevo Nombre..." className="flex-1 min-w-40 border-2 border-slate-200 rounded-lg p-3 text-lg uppercase" value={newName} onChange={(e) => setNewName(e.target.value)} /><input type="number" placeholder="POS" min="1" max={names.length + 1} className="w-16 border-2 border-slate-200 rounded-lg p-2 text-center text-sm font-bold" value={newPosition} onChange={(e) => setNewPosition(e.target.value)} /><label className="flex items-center gap-2 text-xs font-bold text-slate-500">INCORPORACIÓN<input type="date" className="border-2 border-slate-200 rounded-lg p-2 font-mono text-sm" value={newStartDate} onChange={e => setNewStartDate(e.target.value)} /></label><button type="submit" className="bg-blue-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-blue-700 flex items-center gap-2 shadow-sm"><Icon path={Icons.Plus} className="w-5 h-5" /> AÑADIR</button></form><p className="text-xs text-slate-500 -mt-3 mb-5">El personal con fecha futura queda registrado, pero entra en la rotación y en los turnos desde esa fecha.</p><div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">{names.map((name, idx) => { const startDate = activeCollaData.startDates && activeCollaData.startDates[name]; return <div key={idx} className="flex items-center justify-between bg-slate-50 p-2 rounded border border-slate-200 group"><div className="flex items-center gap-2 overflow-hidden"><span className="bg-slate-200 text-slate-600 text-xs font-mono w-6 h-6 flex items-center justify-center rounded-full shrink-0">{idx + 1}</span><div className="min-w-0"><span className="font-bold text-slate-700 truncate text-sm">{name}</span>{startDate && <div className="text-[10px] font-bold text-blue-600">Desde {startDate}</div>}</div></div><button onClick={() => handleRemoveName(idx)} className="text-slate-300 hover:text-red-500 hover:bg-red-50 p-1 rounded transition"><Icon path={Icons.Trash} className="w-4 h-4" /></button></div>; })}</div></div>
+                            <div className={`${configTab !== 'Turnos' ? 'hidden ' : ''}grid grid-cols-1 lg:grid-cols-2 gap-8`}>
+                                <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+                                    <h3 className="text-xl font-bold text-blue-800 mb-6 border-b pb-2 flex items-center gap-2"><Icon path={Icons.Map} className="w-6 h-6" /> VARIABLES CEHORPA</h3>
+                                    <div className="grid grid-cols-1 gap-6">
+                                        <div className="bg-blue-50/50 p-3 rounded-lg border border-blue-100">
+                                            <label className="block text-sm font-bold text-gray-600 uppercase mb-2">Grupo Guardia</label>
+                                            <div className="flex items-center gap-2">
+                                                <input type="number" min="0" max="500" className="w-20 text-center text-lg p-2 border rounded font-bold" value={tempConfig.cehorpa.guardias ?? ''} onChange={(e) => setTempConfig({...tempConfig, cehorpa: {...tempConfig.cehorpa, guardias: e.target.value === '' ? '' : Number(e.target.value)}})} />
+                                                <span className="text-gray-400">pers. a las</span>
+                                                <input type="time" className="flex-1 text-center text-lg p-2 border rounded" value={tempConfig.cehorpa.horaGuardia} onChange={(e) => setTempConfig({...tempConfig, cehorpa: {...tempConfig.cehorpa, horaGuardia: e.target.value}})} />
+                                            </div>
+                                        </div>
+                                        <div className="bg-orange-50/50 p-3 rounded-lg border border-orange-100">
+                                            <label className="block text-sm font-bold text-gray-600 uppercase mb-2">Grupo Madruga</label>
+                                            <div className="flex items-center gap-2">
+                                                <input type="number" min="0" max="500" className="w-20 text-center text-lg p-2 border rounded font-bold" value={tempConfig.cehorpa.madrugan ?? ''} onChange={(e) => setTempConfig({...tempConfig, cehorpa: {...tempConfig.cehorpa, madrugan: e.target.value === '' ? '' : Number(e.target.value)}})} />
+                                                <span className="text-gray-400">pers. a las</span>
+                                                <input type="time" className="flex-1 text-center text-lg p-2 border rounded" value={tempConfig.cehorpa.horaMadruga} onChange={(e) => setTempConfig({...tempConfig, cehorpa: {...tempConfig.cehorpa, horaMadruga: e.target.value}})} />
+                                            </div>
+                                        </div>
+                                        <div className="bg-gray-50/50 p-3 rounded-lg border border-gray-200">
+                                            <label className="block text-sm font-bold text-gray-600 uppercase mb-2">Grupo Resto</label>
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-gray-400 text-sm">El resto entra a las</span>
+                                                <input type="time" className="flex-1 text-center text-lg p-2 border rounded" value={tempConfig.cehorpa.horaResto} onChange={(e) => setTempConfig({...tempConfig, cehorpa: {...tempConfig.cehorpa, horaResto: e.target.value}})} />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+                                    <h3 className="text-xl font-bold text-emerald-800 mb-6 border-b pb-2 flex items-center gap-2"><Icon path={Icons.Map} className="w-6 h-6" /> VARIABLES CORTIJOS</h3>
+                                    <div className="mb-6 bg-emerald-50 p-3 rounded-lg flex items-center justify-between border border-emerald-100">
+                                        <span className="font-bold text-emerald-900 text-sm">CAPACIDAD CORTIJOS:</span>
+                                        <input type="number" min="1" max="500" className="w-20 text-xl font-bold text-center p-1 border-2 border-emerald-500 rounded text-emerald-900" value={tempConfig.cortijos.capacidad ?? ''} onChange={(e) => setTempConfig({...tempConfig, cortijos: {...tempConfig.cortijos, capacidad: e.target.value === '' ? '' : Number(e.target.value)}})} />
+                                    </div>
+                                    <div className="space-y-4">
+                                        <div className="bg-gray-50 p-2 rounded border flex items-center gap-2">
+                                            <span className="w-24 font-bold text-gray-600 text-sm">Guardia:</span>
+                                            <input type="number" min="0" max="500" className="w-16 p-1 border rounded text-center" value={tempConfig.cortijos.guardias ?? ''} onChange={(e) => setTempConfig({...tempConfig, cortijos: {...tempConfig.cortijos, guardias: e.target.value === '' ? '' : Number(e.target.value)}})} />
+                                            <input type="time" className="flex-1 p-1 border rounded text-center" value={tempConfig.cortijos.horaGuardia} onChange={(e) => setTempConfig({...tempConfig, cortijos: {...tempConfig.cortijos, horaGuardia: e.target.value}})} />
+                                        </div>
+                                        <div className="bg-gray-50 p-2 rounded border flex items-center gap-2">
+                                            <span className="w-24 font-bold text-gray-600 text-sm">Intermedios:</span>
+                                            <input type="number" min="0" max="500" className="w-16 p-1 border rounded text-center" value={tempConfig.cortijos.intermedios ?? ''} onChange={(e) => setTempConfig({...tempConfig, cortijos: {...tempConfig.cortijos, intermedios: e.target.value === '' ? '' : Number(e.target.value)}})} />
+                                            <input type="time" className="flex-1 p-1 border rounded text-center" value={tempConfig.cortijos.horaIntermedia} onChange={(e) => setTempConfig({...tempConfig, cortijos: {...tempConfig.cortijos, horaIntermedia: e.target.value}})} />
+                                        </div>
+                                        <div className="bg-gray-50 p-2 rounded border flex items-center gap-2">
+                                            <span className="w-24 font-bold text-gray-600 text-sm">Madrugan:</span>
+                                            <input type="number" min="0" max="500" className="w-16 p-1 border rounded text-center" value={tempConfig.cortijos.madrugan ?? ''} onChange={(e) => setTempConfig({...tempConfig, cortijos: {...tempConfig.cortijos, madrugan: e.target.value === '' ? '' : Number(e.target.value)}})} />
+                                            <input type="time" className="flex-1 p-1 border rounded text-center" value={tempConfig.cortijos.horaMadruga} onChange={(e) => setTempConfig({...tempConfig, cortijos: {...tempConfig.cortijos, horaMadruga: e.target.value}})} />
+                                        </div>
+                                        <div className="bg-blue-50 p-2 rounded border flex items-center gap-2">
+                                            <span className="w-24 font-bold text-blue-600 text-sm">Apoyo (Ceh):</span>
+                                            <span className="text-gray-400 text-xs">Resto a las</span>
+                                            <input type="time" className="flex-1 p-1 border rounded text-center" value={tempConfig.cortijos.horaRestoCehorpa} onChange={(e) => setTempConfig({...tempConfig, cortijos: {...tempConfig.cortijos, horaRestoCehorpa: e.target.value}})} />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className={`${configTab !== 'Turnos' ? 'hidden ' : ''}bg-gradient-to-r from-slate-100 to-white rounded-xl shadow-sm border border-slate-300 p-6`}><h3 className="text-xl font-bold text-slate-900 mb-4 border-b pb-2 flex items-center gap-2"><Icon path={Icons.Rotate} className="w-6 h-6 text-blue-600" /> PUNTO DE PARTIDA ({COLLA_NAMES[activeColla]})</h3><div className="grid grid-cols-1 md:grid-cols-3 gap-6"><div><label className="block text-sm font-bold text-gray-700 mb-1">Fecha de Inicio</label><input type="date" className="w-full p-3 border rounded-lg text-lg font-mono" value={tempRefData.dateString} onChange={(e) => setTempRefData({...tempRefData, dateString: e.target.value})} /></div><div><label className="block text-sm font-bold text-gray-700 mb-1">Primer Guardia (Nº 1)</label><select className="w-full p-3 border rounded-lg text-lg font-bold text-slate-700" value={tempRefData.firstGuardName} onChange={(e) => setTempRefData({...tempRefData, firstGuardName: e.target.value})}>{names.map(name => <option key={name} value={name}>{name}</option>)}</select></div><div><label className="block text-sm font-bold text-gray-700 mb-1">Centro ese día</label><div className="flex gap-0 rounded-lg overflow-hidden border border-gray-300 h-[50px]"><button onClick={() => setTempRefData({...tempRefData, center: 'CORTIJOS'})} className={`flex-1 font-bold transition ${tempRefData.center === 'CORTIJOS' ? 'bg-emerald-600 text-white' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}>CORTIJOS</button><button onClick={() => setTempRefData({...tempRefData, center: 'CEHORPA'})} className={`flex-1 font-bold transition ${tempRefData.center === 'CEHORPA' ? 'bg-blue-600 text-white' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}>CEHORPA</button></div></div></div></div>
+                            <div className={`${configTab !== 'Verdes' ? 'hidden ' : ''}bg-green-50 rounded-xl shadow-sm border border-green-200 p-6`}>
+                                <h3 className="text-xl font-bold text-green-800 mb-6 border-b border-green-200 pb-2 flex items-center gap-2"><Icon path={Icons.Leaf} className="w-6 h-6" /> LOS VERDES (Personal Especial)</h3>
+                                <div className="bg-white p-4 rounded-lg border border-green-100 mb-4">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                        <div><label className="text-xs font-bold text-gray-500">Nombre</label><input type="text" className="w-full p-2 border rounded uppercase font-bold" value={newVerde.name} onChange={e => setNewVerde({...newVerde, name: e.target.value})} /></div>
+                                        <div><label className="text-xs font-bold text-gray-500">Fecha de inicio del periodo</label><input type="date" className="w-full p-2 border rounded" value={newVerde.startDate} onChange={e => setNewVerde({...newVerde, startDate: e.target.value})} /></div>
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                        <div><label className="text-xs font-bold text-gray-500">Patrón Inicial (Esa semana hace...)</label><select className="w-full p-2 border rounded" value={newVerde.startCycleIndex} onChange={e => setNewVerde({...newVerde, startCycleIndex: parseInt(e.target.value)})}><option value="0">Guardia L-J (Madruga X-S)</option><option value="1">Guardia M-V (Madruga L-J)</option><option value="2">Guardia X-S (Madruga M-V)</option></select></div>
+                                        <div><label className="text-xs font-bold text-gray-500">Centro inicial</label><select className="w-full p-2 border rounded" value={newVerde.startCenter} onChange={e => setNewVerde({...newVerde, startCenter: e.target.value})}><option value="CORTIJOS">Empieza en CORTIJOS</option><option value="CEHORPA">Empieza en CEHORPA</option></select></div>
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
+                                        <div>
+                                            <label className="text-xs font-bold text-gray-500">Cambio de centro</label>
+                                            <select className="w-full p-2 border rounded" value={newVerde.rotationMode} onChange={e => setNewVerde({...newVerde, rotationMode: e.target.value})}>
+                                                <option value="SEMANAL">Cada semana</option>
+                                                <option value="DIARIO">Cada día</option>
+                                                <option value="FIJO">No cambia de centro</option>
+                                                <option value="SEGUN_GRUPO">Sigue al centro del grupo</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="text-xs font-bold text-gray-500">Duración</label>
+                                            <div className="grid grid-cols-3 gap-1">
+                                                <button type="button" onClick={() => setNewVerde({...newVerde, periodMode: 'WEEK'})} className={`rounded border px-2 py-2 text-xs font-bold ${newVerde.periodMode === 'WEEK' ? 'border-green-600 bg-green-600 text-white' : 'bg-white text-gray-600'}`}>7 días</button>
+                                                <button type="button" onClick={() => setNewVerde({...newVerde, periodMode: 'CUSTOM'})} className={`rounded border px-2 py-2 text-xs font-bold ${newVerde.periodMode === 'CUSTOM' ? 'border-green-600 bg-green-600 text-white' : 'bg-white text-gray-600'}`}>Fechas</button>
+                                                <button type="button" onClick={() => setNewVerde({...newVerde, periodMode: 'ONGOING'})} className={`rounded border px-2 py-2 text-xs font-bold ${newVerde.periodMode === 'ONGOING' ? 'border-green-600 bg-green-600 text-white' : 'bg-white text-gray-600'}`}>Sin fin</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {newVerde.periodMode === 'CUSTOM' && <div><label className="text-xs font-bold text-gray-500">Fecha de fin (incluida)</label><input type="date" min={newVerde.startDate} className="w-full p-2 border rounded" value={newVerde.endDate} onChange={e => setNewVerde({...newVerde, endDate: e.target.value})} /></div>}
+                                    {newVerde.periodMode === 'WEEK' && <p className="text-xs text-green-800">Estará activo desde el inicio durante 7 días, ambos extremos incluidos.</p>}
+                                    {newVerde.periodMode === 'ONGOING' && <p className="text-xs text-green-800">Estará activo desde la fecha de inicio hasta que lo elimines.</p>}
+                                    <button onClick={addVerde} className="mt-4 w-full bg-green-600 text-white font-bold py-2 rounded hover:bg-green-700 shadow-sm">AÑADIR VERDE AL PERIODO</button>
+                                </div>
+                                <div className="space-y-2">
+                                    {verdes.map(v => (
+                                        <div key={v.id} className="flex justify-between items-center bg-white p-3 rounded border shadow-sm">
+                                            <div>
+                                                <span className="font-black text-green-900">{v.name}</span>
+                                                <div className="text-[10px] text-gray-500 font-mono mt-0.5">
+                                                    {v.startDate} – {v.endDate || 'sin fecha de fin'} | {v.rotationMode === 'FIJO' ? 'Centro fijo' : v.rotationMode === 'DIARIO' ? 'Cambia de centro cada día' : v.rotationMode === 'SEGUN_GRUPO' ? 'Sigue al grupo' : 'Cambia de centro cada semana'} | Inicio en {v.startCenter || v.centerMode || 'CEHORPA'}
+                                                </div>
+                                            </div>
+                                            <button onClick={() => removeVerde(v.id)} className="text-red-500 hover:bg-red-50 p-1 rounded"><Icon path={Icons.Trash} className="w-4 h-4" /></button>
+                                        </div>
+                                    ))}
+                                    {verdes.length === 0 && <p className="text-center text-gray-400 italic text-xs">No hay personal verde configurado.</p>}
+                                </div>
+                            </div>
+                        </div> 
+                        </div>
+                        <div className="-mx-3 shrink-0 border-t bg-white px-3 pt-2 sm:-mx-6 sm:px-6">
+                            <button onClick={saveSettingsToCloud} className="w-full rounded-xl bg-green-600 py-3 font-bold text-white shadow-lg">GUARDAR CAMBIOS</button>
+                        </div>
+                    </div> )}
+
+                    <main className="max-w-lg mx-auto flex w-full flex-1 flex-col px-1.5 pb-24 pt-1.5 sm:p-1.5">
+                        {names.length === 0
+                            ? <p className="m-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-center text-sm font-semibold text-amber-800">Esta colla no tiene personal configurado. Añade personas desde Configuración.</p>
+                            : viewMode === 'daily'
+                            ? <>
+                                {mobileShiftOverview && isToday(selectedDate) && (
+                                    <MobileShiftOverview
+                                        {...mobileShiftOverview}
+                                        onSelectDate={(date) => { setSelectedDate(date); setViewMode('daily'); }}
+                                    />
+                                )}
+                                <DailyView simulation={simulation} />
+                            </>
+                            : viewMode === 'monthly'
+                            ? <MonthlyView monthData={monthData} selectedDate={selectedDate} onSelectDate={(date) => { setSelectedDate(date); setViewMode('daily'); }} />
+                            : <WeeklyView weekData={weekData} names={names} verdes={verdes} />
+                        }
+                    </main>
+                    <MobileDateNav handlePrev={handlePrev} handleNext={handleNext} onToday={handleMobileToday} isToday={isToday(selectedDate)} viewMode={viewMode} />
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

@@ -29,6 +29,8 @@ jobs:
         run: |
           mkdir _site
           cp index.html simulator-core.js _site/
+          mkdir -p _site/preview
+          cp preview/index.html preview/simulator-core.js _site/preview/
           touch _site/.nojekyll
 
       - name: Configurar GitHub Pages
